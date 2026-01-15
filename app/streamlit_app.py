@@ -1,6 +1,6 @@
 """
 Streamlit Dashboard - Clinical Decision Support System
-Real-time medical data from openFDA, PubMed, and RxNorm APIs
+Real-time medical data + LLM-powered insights
 """
 import streamlit as st
 import sys
@@ -15,240 +15,161 @@ from src.medical_apis import (
     get_medical_aggregator
 )
 
-st.set_page_config(
-    page_title="Clinical Decision Support Assistant",
-    page_icon="🏥",
-    layout="wide"
-)
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
+st.set_page_config(page_title="Clinical Decision Support Assistant", page_icon="🏥", layout="wide")
 
 @st.cache_resource
 def load_clients():
-    """Load API clients"""
-    return (
-        get_fda_client(),
-        get_pubmed_client(),
-        get_rxnorm_client(),
-        get_medical_aggregator()
-    )
+    return get_fda_client(), get_pubmed_client(), get_rxnorm_client(), get_medical_aggregator()
+
+def get_openai_client():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        try:
+            api_key = st.secrets.get("OPENAI_API_KEY")
+        except:
+            pass
+    if api_key and OPENAI_AVAILABLE:
+        return OpenAI(api_key=api_key)
+    return None
+
+def generate_llm_response(client, query, context):
+    if not client:
+        return None
+    
+    context_text = ""
+    if context.get('research'):
+        context_text += "\n## PubMed Research:\n"
+        for a in context['research'][:3]:
+            context_text += f"- {a['title']} ({a['year']}): {a['abstract'][:200]}...\n"
+    if context.get('drug_info'):
+        context_text += "\n## FDA Drug Info:\n"
+        for drug, info in context['drug_info'].items():
+            if info.get('found'):
+                context_text += f"- {drug}: {info.get('indications', [''])[0][:150]}...\n"
+    if context.get('interactions'):
+        context_text += "\n## Drug Interactions:\n"
+        for i in context['interactions']:
+            context_text += f"- {i.get('description', '')}\n"
+    if context.get('patient_info'):
+        context_text += f"\n## Patient: {context['patient_info']}"
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a Clinical Decision Support AI. Provide evidence-based medical insights. Always note that final decisions must be made by healthcare professionals. Format with clear sections."},
+                {"role": "user", "content": f"Query: {query}\n\nReal-time Data:\n{context_text}\n\nProvide: 1) Clinical Assessment 2) Key Findings 3) Recommendations 4) Warnings if any"}
+            ],
+            temperature=0.3,
+            max_tokens=1200
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"LLM Error: {str(e)}"
 
 def main():
     st.markdown("## 🏥 Clinical Decision Support Assistant")
-    st.caption("Real-time medical data from openFDA, PubMed & RxNorm APIs")
+    st.caption("Real-time APIs + AI-powered clinical insights")
     
-    fda_client, pubmed_client, rxnorm_client, aggregator = load_clients()
+    fda, pubmed, rxnorm, aggregator = load_clients()
+    llm = get_openai_client()
     
-    # Sidebar
     with st.sidebar:
-        st.header("🔌 Data Sources")
-        st.success("✅ openFDA - Drug Info")
-        st.success("✅ PubMed - Research")
-        st.success("✅ RxNorm - Interactions")
-        
+        st.header("🔌 Status")
+        st.success("✅ openFDA")
+        st.success("✅ PubMed")
+        st.success("✅ RxNorm")
+        st.success("✅ OpenAI LLM") if llm else st.warning("⚠️ LLM - Add API key")
         st.divider()
-        st.header("👤 Patient Info")
+        st.header("👤 Patient")
         age = st.number_input("Age", 0, 120, 0)
         gender = st.selectbox("Gender", ["Not specified", "Male", "Female"])
-        medical_history = st.text_area("Medical History", placeholder="e.g., Diabetes, Hypertension")
-        current_meds = st.text_area("Current Medications", placeholder="e.g., Metformin, Lisinopril")
-        
+        history = st.text_area("Medical History", placeholder="Diabetes, HTN")
+        meds = st.text_area("Medications", placeholder="Metformin, Lisinopril")
         st.divider()
-        st.caption("⚠️ For educational purposes only.")
+        st.caption("⚠️ Educational only. Not for real medical decisions.")
     
-    # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🔬 Research Search", 
-        "💊 Drug Lookup", 
-        "⚠️ Interaction Checker",
-        "📋 Clinical Query"
-    ])
+    tab1, tab2, tab3, tab4 = st.tabs(["🤖 AI Query", "🔬 PubMed", "💊 Drug Info", "⚠️ Interactions"])
     
-    # Tab 1: PubMed Research Search
     with tab1:
-        st.markdown("### 🔬 Search Medical Research (PubMed)")
-        st.caption("Search millions of medical research articles in real-time")
+        st.markdown("### 🤖 AI Clinical Query")
+        query = st.text_area("Ask any clinical question:", placeholder="What are treatment options for Type 2 diabetes with hypertension?", height=100)
+        med_list = [m.strip() for m in meds.split(',') if m.strip()] if meds else []
         
-        research_query = st.text_input(
-            "Search medical literature:",
-            placeholder="e.g., Type 2 diabetes treatment guidelines 2024"
-        )
-        
-        num_results = st.slider("Number of results", 3, 10, 5)
-        
-        if st.button("🔍 Search PubMed", type="primary", key="pubmed_search"):
-            if research_query:
-                with st.spinner("Searching PubMed..."):
-                    results = pubmed_client.search_articles(research_query, max_results=num_results)
-                    
-                    if results.get('articles'):
-                        st.success(f"Found {len(results['articles'])} articles")
-                        
-                        for i, article in enumerate(results['articles'], 1):
-                            with st.expander(f"📄 {article['title'][:80]}..." if len(article['title']) > 80 else f"📄 {article['title']}"):
-                                st.markdown(f"**Journal:** {article['journal']} ({article['year']})")
-                                st.markdown(f"**Abstract:** {article['abstract']}")
-                                if article['url']:
-                                    st.markdown(f"[🔗 View on PubMed]({article['url']})")
-                    else:
-                        st.warning("No articles found. Try different search terms.")
-    
-    # Tab 2: Drug Lookup (openFDA)
-    with tab2:
-        st.markdown("### 💊 Drug Information (openFDA)")
-        st.caption("Real-time drug data from FDA database")
-        
-        drug_name = st.text_input(
-            "Enter drug name:",
-            placeholder="e.g., Metformin, Lisinopril, Atorvastatin"
-        )
-        
-        if st.button("🔍 Search Drug", type="primary", key="drug_search"):
-            if drug_name:
-                with st.spinner(f"Fetching {drug_name} info from FDA..."):
-                    info = fda_client.get_drug_info_summary(drug_name)
-                    
-                    if info.get('found'):
-                        st.success(f"✅ Found: {drug_name}")
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if info.get('indications') and info['indications'][0] != 'Not available':
-                                st.markdown("### 📋 Indications")
-                                text = info['indications'][0]
-                                st.write(text[:800] + "..." if len(text) > 800 else text)
-                            
-                            if info.get('dosage') and info['dosage'][0] != 'Not available':
-                                st.markdown("### 💊 Dosage")
-                                text = info['dosage'][0]
-                                st.write(text[:800] + "..." if len(text) > 800 else text)
-                        
-                        with col2:
-                            if info.get('warnings') and info['warnings'][0] != 'Not available':
-                                st.markdown("### ⚠️ Warnings")
-                                text = info['warnings'][0]
-                                st.warning(text[:600] + "..." if len(text) > 600 else text)
-                            
-                            if info.get('contraindications') and info['contraindications'][0] != 'Not available':
-                                st.markdown("### 🚫 Contraindications")
-                                text = info['contraindications'][0]
-                                st.error(text[:400] + "..." if len(text) > 400 else text)
-                        
-                        if info.get('common_adverse_events'):
-                            st.markdown("### 💉 Reported Adverse Events")
-                            st.write(", ".join(info['common_adverse_events'][:15]))
-                        
-                        if info.get('interactions') and info['interactions'][0] != 'Not available':
-                            st.markdown("### 🔄 Drug Interactions")
-                            text = info['interactions'][0]
-                            st.info(text[:600] + "..." if len(text) > 600 else text)
-                    else:
-                        st.warning(f"No FDA data found for '{drug_name}'. Try the generic name.")
-    
-    # Tab 3: Drug Interaction Checker (RxNorm)
-    with tab3:
-        st.markdown("### ⚠️ Drug Interaction Checker (RxNorm)")
-        st.caption("Check for interactions between multiple drugs using NIH RxNorm database")
-        
-        st.markdown("Enter drugs to check (one per line):")
-        drugs_text = st.text_area(
-            "Drugs:",
-            placeholder="Warfarin\nAspirin\nIbuprofen",
-            height=150,
-            label_visibility="collapsed"
-        )
-        
-        if st.button("🔍 Check Interactions", type="primary", key="interaction_check"):
-            if drugs_text:
-                drug_list = [d.strip() for d in drugs_text.strip().split('\n') if d.strip()]
-                
-                if len(drug_list) < 2:
-                    st.warning("Please enter at least 2 drugs to check interactions.")
-                else:
-                    with st.spinner(f"Checking interactions between {len(drug_list)} drugs..."):
-                        # First verify drugs exist
-                        st.markdown("#### 🔍 Verifying drugs...")
-                        valid_drugs = []
-                        for drug in drug_list:
-                            info = rxnorm_client.get_drug_info(drug)
-                            if info.get('found'):
-                                st.write(f"✅ {drug} - Found")
-                                valid_drugs.append(drug)
-                            else:
-                                st.write(f"❌ {drug} - Not found in RxNorm")
-                        
-                        if len(valid_drugs) >= 2:
-                            st.markdown("#### ⚠️ Interaction Results")
-                            interactions = rxnorm_client.get_interactions(valid_drugs)
-                            
-                            if interactions.get('interactions'):
-                                st.error(f"Found {len(interactions['interactions'])} potential interaction(s)!")
-                                
-                                for inter in interactions['interactions']:
-                                    with st.expander(f"⚠️ {' + '.join(inter.get('drugs', ['Unknown']))}"):
-                                        st.markdown(f"**Severity:** {inter.get('severity', 'Unknown')}")
-                                        st.markdown(f"**Description:** {inter.get('description', 'No description')}")
-                            else:
-                                st.success("✅ No known interactions found between these drugs.")
-                        else:
-                            st.warning("Need at least 2 valid drugs to check interactions.")
-    
-    # Tab 4: Clinical Query (Combined)
-    with tab4:
-        st.markdown("### 📋 Clinical Query")
-        st.caption("Combines research + drug info + interactions")
-        
-        query = st.text_area(
-            "Enter your clinical question:",
-            placeholder="e.g., What is the first-line treatment for hypertension in diabetic patients?",
-            height=100
-        )
-        
-        # Get medications from sidebar
-        medications = [m.strip() for m in current_meds.split(',')] if current_meds else []
-        
-        if st.button("🔍 Analyze", type="primary", key="clinical_query"):
+        if st.button("🔍 Analyze", type="primary"):
             if query:
-                with st.spinner("Gathering real-time medical data..."):
-                    result = aggregator.clinical_query(query, medications if medications else None)
+                with st.spinner("Gathering data & generating AI response..."):
+                    research = pubmed.search_articles(query, 5).get('articles', [])
+                    drug_info = {m: fda.get_drug_info_summary(m) for m in med_list} if med_list else {}
+                    interactions = rxnorm.get_interactions(med_list).get('interactions', []) if len(med_list) >= 2 else []
+                    patient = f"Age:{age}, Gender:{gender}, History:{history}" if age > 0 else ""
                     
-                    # Show research
-                    st.markdown("### 🔬 Relevant Research (PubMed)")
-                    if result.get('research'):
-                        for article in result['research'][:3]:
-                            st.markdown(f"**📄 {article['title']}**")
-                            st.caption(f"{article['journal']} ({article['year']})")
-                            st.write(article['abstract'][:300] + "...")
-                            if article['url']:
-                                st.markdown(f"[View on PubMed]({article['url']})")
-                            st.divider()
+                    st.success(f"✅ Found {len(research)} articles, {len(drug_info)} drugs analyzed")
+                    
+                    st.markdown("---")
+                    st.markdown("### 🤖 AI Clinical Assessment")
+                    
+                    if llm:
+                        response = generate_llm_response(llm, query, {'research': research, 'drug_info': drug_info, 'interactions': interactions, 'patient_info': patient})
+                        st.markdown(response)
                     else:
-                        st.info("No research articles found for this query.")
+                        st.warning("Add OPENAI_API_KEY in Streamlit secrets for AI insights")
                     
-                    # Show drug info if medications provided
-                    if result.get('drug_info'):
-                        st.markdown("### 💊 Medication Information (openFDA)")
-                        for drug, info in result['drug_info'].items():
-                            if info.get('found'):
-                                with st.expander(f"💊 {drug}"):
-                                    if info.get('warnings') and info['warnings'][0] != 'Not available':
-                                        st.warning(f"**Warnings:** {info['warnings'][0][:300]}...")
-                                    if info.get('common_adverse_events'):
-                                        st.write(f"**Side effects:** {', '.join(info['common_adverse_events'][:5])}")
-                    
-                    # Show interactions
-                    if result.get('interactions'):
-                        st.markdown("### ⚠️ Drug Interactions (RxNorm)")
-                        for inter in result['interactions']:
-                            st.error(f"**{' + '.join(inter.get('drugs', []))}:** {inter.get('description', 'Unknown')}")
-                    
-                    # Patient context
-                    if age > 0 or gender != "Not specified" or medical_history:
-                        st.markdown("### 👤 Patient Context")
-                        context = []
-                        if age > 0: context.append(f"Age: {age}")
-                        if gender != "Not specified": context.append(f"Gender: {gender}")
-                        if medical_history: context.append(f"History: {medical_history}")
-                        st.info(" | ".join(context))
+                    st.markdown("---")
+                    st.markdown("### 📚 Research Sources")
+                    for a in research[:3]:
+                        with st.expander(a['title'][:60] + "..."):
+                            st.write(f"**{a['journal']}** ({a['year']})")
+                            st.write(a['abstract'])
+                            if a.get('url'): st.markdown(f"[PubMed Link]({a['url']})")
+    
+    with tab2:
+        st.markdown("### 🔬 PubMed Search")
+        q = st.text_input("Search:", placeholder="diabetes treatment 2024")
+        n = st.slider("Results", 3, 10, 5)
+        if st.button("Search", key="pub"):
+            if q:
+                results = pubmed.search_articles(q, n).get('articles', [])
+                st.success(f"Found {len(results)}")
+                for a in results:
+                    with st.expander(a['title'][:70]):
+                        st.write(f"{a['journal']} ({a['year']})")
+                        st.write(a['abstract'])
+                        if a.get('url'): st.markdown(f"[Link]({a['url']})")
+    
+    with tab3:
+        st.markdown("### 💊 Drug Lookup")
+        drug = st.text_input("Drug name:", placeholder="Metformin")
+        if st.button("Search", key="drug"):
+            if drug:
+                info = fda.get_drug_info_summary(drug)
+                if info.get('found'):
+                    st.success(f"Found: {drug}")
+                    if info.get('indications'): st.markdown(f"**Indications:** {info['indications'][0][:500]}...")
+                    if info.get('warnings'): st.warning(f"**Warnings:** {info['warnings'][0][:500]}...")
+                    if info.get('common_adverse_events'): st.write(f"**Side Effects:** {', '.join(info['common_adverse_events'][:10])}")
+                else:
+                    st.warning("Not found")
+    
+    with tab4:
+        st.markdown("### ⚠️ Interaction Check")
+        drugs = st.text_area("Enter drugs (one per line):", placeholder="Warfarin\nAspirin")
+        if st.button("Check", key="inter"):
+            dl = [d.strip() for d in drugs.split('\n') if d.strip()]
+            if len(dl) >= 2:
+                result = rxnorm.get_interactions(dl)
+                if result.get('interactions'):
+                    st.error(f"Found {len(result['interactions'])} interactions!")
+                    for i in result['interactions']:
+                        st.write(f"⚠️ {i.get('description')}")
+                else:
+                    st.success("No interactions found")
 
 if __name__ == "__main__":
     main()
