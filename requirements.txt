@@ -1,47 +1,19 @@
-# LLM & NLP
-langchain==0.1.0
-langchain-community==0.0.13
-langchain-openai==0.0.5
-openai==1.10.0
-tiktoken==0.5.2
+# Core
+streamlit>=1.30.0
+requests>=2.31.0
 
-# Embeddings
-sentence-transformers==2.2.2
+# LLM (optional)
+openai>=1.10.0
 
-# Vector Store
-faiss-cpu==1.7.4
-
-# Image Processing (BLIP-2)
-transformers==4.36.0
-torch==2.1.0
-torchvision==0.16.0
-Pillow==10.2.0
-
-# API Framework
-fastapi==0.109.0
-uvicorn==0.27.0
-python-multipart==0.0.6
-
-# Dashboard
-streamlit==1.30.0
-
-# HTTP Client
-requests==2.31.0
-httpx==0.26.0
+# Embeddings & Vector Store
+sentence-transformers>=2.6.0
+faiss-cpu>=1.8.0
 
 # Data Processing
-pandas==2.1.4
-numpy==1.26.3
-
-# Document Processing
-pypdf==4.0.1
-python-docx==1.1.0
+pandas>=2.0.0
+numpy>=1.24.0
 
 # Utilities
-python-dotenv==1.0.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
-
-# Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
