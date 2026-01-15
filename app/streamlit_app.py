@@ -1,6 +1,6 @@
 """
 Clinical Decision Support Assistant
-Premium Apple-Inspired Design + Free Gemini AI
+Premium Design + Multiple Free LLM Options (Gemini, Groq)
 """
 import streamlit as st
 import sys
@@ -64,12 +64,34 @@ st.markdown("""
 def load_clients():
     return get_fda_client(), get_pubmed_client(), get_rxnorm_client()
 
-def call_gemini(prompt, api_key):
-    """Call Gemini API with correct model name"""
+def call_groq(prompt, api_key):
+    """Call Groq API (Free & Fast!)"""
     if not api_key:
         return None
     
-    # Use gemini-2.0-flash (current free model)
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json={
+            "model": "llama-3.1-70b-versatile",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 1500
+        }, timeout=30)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Groq Error: {str(e)}"
+
+def call_gemini(prompt, api_key):
+    """Call Gemini API"""
+    if not api_key:
+        return None
+    
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
     
     try:
@@ -80,10 +102,24 @@ def call_gemini(prompt, api_key):
         response.raise_for_status()
         return response.json()['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        return f"AI Error: {str(e)}"
+        return f"Gemini Error: {str(e)}"
 
-def generate_response(query, research, drug_info, interactions, patient, api_key):
-    context = f"""You are an expert Clinical Decision Support AI.
+def call_llm(prompt, gemini_key, groq_key):
+    """Try Groq first (faster, higher limits), then Gemini"""
+    if groq_key:
+        result = call_groq(prompt, groq_key)
+        if result and not result.startswith("Groq Error"):
+            return result, "Groq"
+    
+    if gemini_key:
+        result = call_gemini(prompt, gemini_key)
+        if result and not result.startswith("Gemini Error"):
+            return result, "Gemini"
+    
+    return None, None
+
+def generate_response(query, research, drug_info, interactions, patient, gemini_key, groq_key):
+    prompt = f"""You are an expert Clinical Decision Support AI.
 
 QUERY: {query}
 PATIENT: {patient if patient else 'Not provided'}
@@ -91,20 +127,20 @@ PATIENT: {patient if patient else 'Not provided'}
 📚 RESEARCH ({len(research)} articles):
 """
     for i, a in enumerate(research[:3], 1):
-        context += f"\n{i}. {a['title']} ({a['year']})\n   {a['abstract'][:180]}...\n"
+        prompt += f"\n{i}. {a['title']} ({a['year']})\n   {a['abstract'][:180]}...\n"
     
     if drug_info:
-        context += "\n💊 MEDICATIONS:\n"
+        prompt += "\n💊 MEDICATIONS:\n"
         for d, info in drug_info.items():
             if info.get('found'):
-                context += f"• {d}: {info.get('indications', [''])[0][:120]}...\n"
+                prompt += f"• {d}: {info.get('indications', [''])[0][:120]}...\n"
     
     if interactions:
-        context += "\n⚠️ INTERACTIONS:\n"
+        prompt += "\n⚠️ INTERACTIONS:\n"
         for i in interactions:
-            context += f"• {i.get('description', '')}\n"
+            prompt += f"• {i.get('description', '')}\n"
     
-    context += """
+    prompt += """
 
 Provide a clinical assessment with these sections:
 ## 🔍 Clinical Assessment
@@ -114,18 +150,24 @@ Provide a clinical assessment with these sections:
 
 Note: Educational purposes only. Consult healthcare professionals for medical decisions."""
     
-    return call_gemini(context, api_key)
+    return call_llm(prompt, gemini_key, groq_key)
 
 def main():
     fda, pubmed, rxnorm = load_clients()
     
-    # Get API key
+    # Get API keys
     gemini_key = os.getenv("GEMINI_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
+    
     if not gemini_key:
-        try:
-            gemini_key = st.secrets.get("GEMINI_API_KEY")
-        except:
-            pass
+        try: gemini_key = st.secrets.get("GEMINI_API_KEY")
+        except: pass
+    
+    if not groq_key:
+        try: groq_key = st.secrets.get("GROQ_API_KEY")
+        except: pass
+    
+    has_llm = gemini_key or groq_key
     
     # Hero
     st.markdown("""
@@ -140,7 +182,7 @@ def main():
     c1.markdown('<span class="status-pill status-on">● PubMed</span>', unsafe_allow_html=True)
     c2.markdown('<span class="status-pill status-on">● FDA</span>', unsafe_allow_html=True)
     c3.markdown('<span class="status-pill status-on">● RxNorm</span>', unsafe_allow_html=True)
-    c4.markdown(f'<span class="status-pill {"status-on" if gemini_key else "status-off"}">● Gemini AI</span>', unsafe_allow_html=True)
+    c4.markdown(f'<span class="status-pill {"status-on" if has_llm else "status-off"}">● AI {"(Groq)" if groq_key else "(Gemini)" if gemini_key else ""}</span>', unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -176,19 +218,22 @@ def main():
                 
                 st.markdown(f'<div class="success-box">✅ Found {len(research)} articles{f" • {len(drug_info)} drugs" if drug_info else ""}</div>', unsafe_allow_html=True)
                 
-                if gemini_key:
+                if has_llm:
                     with st.spinner("Generating AI analysis..."):
-                        response = generate_response(query, research, drug_info, interactions, patient, gemini_key)
+                        response, provider = generate_response(query, research, drug_info, interactions, patient, gemini_key, groq_key)
                     
-                    if response and not response.startswith("AI Error"):
-                        st.markdown(f'<div class="ai-card">{response}</div>', unsafe_allow_html=True)
+                    if response and not response.startswith(("Groq Error", "Gemini Error")):
+                        st.markdown(f'<div class="ai-card"><small style="color:#64748b;">Powered by {provider}</small><br><br>{response}</div>', unsafe_allow_html=True)
                     else:
-                        st.error(response)
+                        st.error(response or "AI unavailable")
                 else:
                     st.markdown("""
                         <div class="warning-box">
-                            ⚠️ Add GEMINI_API_KEY to enable AI insights<br>
-                            <small>Free key: <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a></small>
+                            ⚠️ Add an API key for AI insights:<br><br>
+                            <b>Option 1 - Groq (Recommended, faster):</b><br>
+                            <small>Free key: <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a></small><br><br>
+                            <b>Option 2 - Gemini:</b><br>
+                            <small>Free key: <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></small>
                         </div>
                     """, unsafe_allow_html=True)
                 
