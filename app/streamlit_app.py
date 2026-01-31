@@ -400,71 +400,52 @@ out body center;
             return 'Independent'
 
         def geocode_address(self, address: str) -> Dict:
-            """Convert US address/ZIP code to coordinates"""
+            """Convert US ZIP code to coordinates using Zippopotam.us API"""
             try:
-                address = address.strip()
-                original_input = address
+                zip_code = address.strip()
 
-                # Handle US ZIP codes specifically
-                if address.isdigit() and len(address) == 5:
-                    # Use structured query for ZIP codes
-                    endpoint = "https://nominatim.openstreetmap.org/search"
-                    params = {
-                        'postalcode': address,
-                        'country': 'United States',
-                        'format': 'json',
-                        'limit': 1,
-                        'addressdetails': 1
-                    }
-                else:
-                    # For addresses, add USA if not specified
-                    if 'usa' not in address.lower() and 'united states' not in address.lower():
-                        address = f"{address}, United States"
+                # Validate ZIP code format
+                if not (zip_code.isdigit() and len(zip_code) == 5):
+                    return {'success': False, 'error': 'Please enter a valid 5-digit US ZIP code (e.g., 38119)'}
 
-                    endpoint = "https://nominatim.openstreetmap.org/search"
-                    params = {
-                        'q': address,
-                        'format': 'json',
-                        'limit': 1,
-                        'addressdetails': 1,
-                        'countrycodes': 'us'
-                    }
+                # Use Zippopotam.us API - specifically for US ZIP codes
+                endpoint = f"https://api.zippopotam.us/us/{zip_code}"
 
-                response = self.session.get(endpoint, params=params, timeout=15)
+                response = self.session.get(endpoint, timeout=10)
+
+                if response.status_code == 404:
+                    return {'success': False, 'error': f'ZIP code {zip_code} not found. Please check and try again.'}
+
                 response.raise_for_status()
                 data = response.json()
 
-                if data:
-                    location = data[0]
-                    addr = location.get('address', {})
+                if data and 'places' in data and len(data['places']) > 0:
+                    place = data['places'][0]
 
-                    # Verify it's a US location
-                    country = addr.get('country', '').lower()
-                    country_code = addr.get('country_code', '').lower()
+                    city = place.get('place name', '')
+                    state = place.get('state', '')
+                    state_abbr = place.get('state abbreviation', '')
+                    lat = float(place.get('latitude', 0))
+                    lon = float(place.get('longitude', 0))
 
-                    if country_code != 'us' and 'united states' not in country and 'usa' not in country:
-                        return {'success': False, 'error': f'Location found is not in USA. Please enter a valid US ZIP code or address.'}
-
-                    # Build display name
-                    city = addr.get('city') or addr.get('town') or addr.get('village') or addr.get('county', '')
-                    state = addr.get('state', '')
-                    postcode = addr.get('postcode', original_input)
-
-                    display = f"{city}, {state} {postcode}".strip(', ')
+                    display = f"{city}, {state_abbr} {zip_code}"
 
                     return {
                         'success': True,
-                        'latitude': float(location['lat']),
-                        'longitude': float(location['lon']),
+                        'latitude': lat,
+                        'longitude': lon,
                         'display_name': display,
                         'city': city,
                         'state': state,
-                        'zip': postcode
+                        'state_abbr': state_abbr,
+                        'zip': zip_code
                     }
 
-                return {'success': False, 'error': f'Could not find US location for "{original_input}". Please check the ZIP code.'}
+                return {'success': False, 'error': f'Could not find location for ZIP code {zip_code}'}
+            except requests.exceptions.RequestException as e:
+                return {'success': False, 'error': f'Network error. Please try again.'}
             except Exception as e:
-                return {'success': False, 'error': str(e)}
+                return {'success': False, 'error': f'Error: {str(e)}'}
 
         def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
             """Calculate distance in kilometers using Haversine formula"""
