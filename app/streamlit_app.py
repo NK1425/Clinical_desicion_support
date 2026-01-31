@@ -2511,139 +2511,89 @@ IMPORTANT: This is for educational purposes. Always recommend consulting healthc
     # TAB 6: FIND PHARMACY
     # ========================================
     with tab6:
-        st.markdown("""
-            <div class="glass-card">
-                <h3>📍 Find Nearby Pharmacies</h3>
-                <p>Locate pharmacies near you. Enter your ZIP code or full address to find the closest pharmacy locations with contact information.</p>
-            </div>
-        """, unsafe_allow_html=True)
+        st.subheader("📍 Find Nearby Pharmacies")
+        st.write("Locate pharmacies near you. Enter your ZIP code or address to find the closest locations.")
 
         col1, col2, col3 = st.columns([2, 2, 1])
 
         with col1:
             address = st.text_input(
-                "Enter ZIP code or address",
+                "ZIP code or address",
                 placeholder="e.g., 90210 or 123 Main St, Los Angeles, CA",
-                key="pharmacy_address",
-                help="Enter a 5-digit ZIP code or full street address"
+                key="pharmacy_address"
             )
 
         with col2:
             drug_needed = st.text_input(
-                "Medication needed (optional)",
+                "Medication (optional)",
                 placeholder="e.g., Metformin",
                 key="pharmacy_drug"
             )
 
         with col3:
             search_radius = st.selectbox(
-                "Search radius",
+                "Radius",
                 options=["5 miles", "10 miles", "15 miles", "25 miles"],
                 index=1,
                 key="pharmacy_radius"
             )
 
-        # Convert miles to meters for API
-        radius_map = {"5 miles": 8000, "10 miles": 16000, "15 miles": 24000, "25 miles": 40000}
-        radius_meters = radius_map.get(search_radius, 16000)
+        # Convert miles to meters and get max miles for filtering
+        radius_map = {"5 miles": (8000, 5), "10 miles": (16000, 10), "15 miles": (24000, 15), "25 miles": (40000, 25)}
+        radius_meters, max_miles = radius_map.get(search_radius, (16000, 10))
 
         if st.button("🔍 Find Pharmacies", key="pharmacy_btn", use_container_width=True):
             if address:
-                with st.spinner("📍 Locating your area and searching for pharmacies..."):
-                    # Geocode address
+                with st.spinner("📍 Searching for pharmacies near you..."):
                     geocode = clients['pharmacy'].geocode_address(address)
 
                     if geocode.get('success'):
                         lat, lon = geocode['latitude'], geocode['longitude']
-
-                        # Show location confirmation
                         location_display = geocode.get('display_name', address)
-                        st.markdown(f"""
-                            <div class="info-box">
-                                📍 Searching near: <strong>{location_display}</strong>
-                            </div>
-                        """, unsafe_allow_html=True)
+
+                        st.info(f"📍 Searching near: **{location_display}**")
 
                         result = clients['pharmacy'].find_nearby_pharmacies(lat, lon, drug_needed, radius=radius_meters)
 
                         if result.get('pharmacies'):
-                            pharmacy_count = len(result['pharmacies'])
-                            st.markdown(f"""
-                                <div class="success-box">
-                                    ✅ Found <strong>{pharmacy_count}</strong> pharmacies within {search_radius} of your location
-                                </div>
-                            """, unsafe_allow_html=True)
+                            # STRICT FILTER: Only show pharmacies within the selected radius
+                            filtered_pharmacies = [
+                                p for p in result['pharmacies']
+                                if p.get('distance_miles', p.get('distance_km', 999) * 0.621371) <= max_miles * 1.1
+                            ]
 
-                            for idx, pharm in enumerate(result['pharmacies'], 1):
-                                distance_miles = pharm.get('distance_miles', pharm.get('distance_km', 0) * 0.621371)
-                                distance_km = pharm.get('distance_km', 0)
-                                name = pharm.get('name', 'Pharmacy')
-                                address_text = pharm.get('address', 'Address not available')
-                                phone = pharm.get('phone', '')
-                                website = pharm.get('website', '')
-                                hours = pharm.get('opening_hours', '')
+                            if filtered_pharmacies:
+                                st.success(f"Found {len(filtered_pharmacies)} pharmacies within {search_radius}")
 
-                                # Build additional info line
-                                extra_info = []
-                                if phone:
-                                    extra_info.append(f"📞 {phone}")
-                                if hours:
-                                    extra_info.append(f"🕐 {hours}")
+                                for idx, pharm in enumerate(filtered_pharmacies[:10], 1):
+                                    distance_miles = pharm.get('distance_miles', pharm.get('distance_km', 0) * 0.621371)
+                                    name = pharm.get('name', 'Pharmacy')
+                                    address_text = pharm.get('address', 'Address not available')
+                                    phone = pharm.get('phone', '')
+                                    hours = pharm.get('opening_hours', '')
 
-                                extra_html = f'<p style="color: #64748b; font-size: 0.85rem; margin-top: 8px;">{" • ".join(extra_info)}</p>' if extra_info else ''
+                                    with st.container():
+                                        c1, c2 = st.columns([4, 1])
+                                        with c1:
+                                            st.markdown(f"**#{idx} 🏥 {name}**")
+                                            st.caption(address_text)
+                                            if phone:
+                                                st.caption(f"📞 {phone}")
+                                            if hours:
+                                                st.caption(f"🕐 {hours}")
+                                        with c2:
+                                            st.metric("Distance", f"{distance_miles:.1f} mi")
+                                        st.divider()
 
-                                website_html = f'<a href="{website}" target="_blank" style="color: #8b5cf6; font-size: 0.85rem; text-decoration: none;">🌐 Website</a>' if website else ''
-
-                                st.markdown(f"""
-                                    <div class="pharmacy-card">
-                                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;">
-                                            <div style="flex: 1;">
-                                                <h4 style="color: #22c55e; margin: 0 0 8px 0;">
-                                                    <span style="color: #64748b; font-size: 0.9rem;">#{idx}</span> 🏥 {name}
-                                                </h4>
-                                                <p style="color: #cbd5e1; margin: 0; font-size: 0.95rem;">{address_text}</p>
-                                                {extra_html}
-                                                {website_html}
-                                            </div>
-                                            <div style="text-align: right; min-width: 100px;">
-                                                <span style="color: #8b5cf6; font-weight: 700; font-size: 1.2rem;">
-                                                    {distance_miles:.1f} mi
-                                                </span>
-                                                <p style="color: #64748b; font-size: 0.8rem; margin: 4px 0 0 0;">
-                                                    ({distance_km:.1f} km)
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                """, unsafe_allow_html=True)
-
-                            # Add note about data source
-                            st.markdown("""
-                                <p style="color: #64748b; font-size: 0.8rem; text-align: center; margin-top: 20px;">
-                                    📊 Data sourced from OpenStreetMap. Some pharmacies may not be listed.
-                                    For the most accurate results, also check Google Maps or call ahead.
-                                </p>
-                            """, unsafe_allow_html=True)
+                                st.caption("📊 Data from OpenStreetMap. For best results, verify with Google Maps.")
+                            else:
+                                st.warning(f"No pharmacies found within {search_radius}. Try increasing the radius.")
                         else:
-                            st.markdown(f"""
-                                <div class="warning-box">
-                                    <strong>No pharmacies found within {search_radius}.</strong><br>
-                                    Try increasing the search radius or entering a different location.
-                                </div>
-                            """, unsafe_allow_html=True)
+                            st.warning(f"No pharmacies found within {search_radius}. Try a larger radius or different location.")
                     else:
-                        st.markdown(f"""
-                            <div class="danger-box">
-                                <strong>Could not find location.</strong><br>
-                                {geocode.get('error', 'Please check your ZIP code or address and try again.')}
-                            </div>
-                        """, unsafe_allow_html=True)
+                        st.error(f"Could not find location: {geocode.get('error', 'Please check your input.')}")
             else:
-                st.markdown("""
-                    <div class="info-box">
-                        Please enter a ZIP code or address to search for pharmacies.
-                    </div>
-                """, unsafe_allow_html=True)
+                st.info("Please enter a ZIP code or address to search.")
 
     # ========================================
     # FOOTER
