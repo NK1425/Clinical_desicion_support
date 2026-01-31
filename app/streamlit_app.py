@@ -2161,7 +2161,7 @@ Write in a patient-friendly manner and emphasize consulting healthcare professio
         """, unsafe_allow_html=True)
 
         # Patient Context
-        with st.expander("👤 Patient Information (Optional)", expanded=False):
+        with st.expander("Patient Information (Optional)", expanded=False):
             col1, col2 = st.columns(2)
             age = col1.number_input("Age", 0, 120, 0, key="ai_age")
             gender = col2.selectbox("Gender", ["Not specified", "Male", "Female", "Other"], key="ai_gender")
