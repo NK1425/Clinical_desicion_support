@@ -255,47 +255,149 @@ if not APIS_IMPORTED:
             return {'disease': disease_name, 'suggested_medications': []}
 
     class PharmacyFinderClient:
-        """Client for finding pharmacies"""
+        """Client for finding pharmacies using Overpass API for accurate results"""
         def __init__(self):
             self.session = requests.Session()
+            self.session.headers.update({'User-Agent': 'MedAI-ClinicalSupport/1.0'})
 
-        def find_nearby_pharmacies(self, lat: float, lon: float, drug_name: str = None, radius: int = 10000) -> Dict:
+        def find_nearby_pharmacies(self, lat: float, lon: float, drug_name: str = None, radius: int = 8000) -> Dict:
+            """Find pharmacies within radius (meters) using Overpass API"""
             try:
-                endpoint = "https://nominatim.openstreetmap.org/search"
-                params = {'q': 'pharmacy', 'format': 'json', 'lat': lat, 'lon': lon, 'limit': 10, 'addressdetails': 1}
-                headers = {'User-Agent': 'MedAI/1.0'}
-                response = self.session.get(endpoint, params=params, headers=headers, timeout=10)
+                # Use Overpass API for accurate POI search
+                overpass_url = "https://overpass-api.de/api/interpreter"
+
+                # Query for pharmacies within radius
+                overpass_query = f"""
+                [out:json][timeout:25];
+                (
+                  node["amenity"="pharmacy"](around:{radius},{lat},{lon});
+                  way["amenity"="pharmacy"](around:{radius},{lat},{lon});
+                  node["healthcare"="pharmacy"](around:{radius},{lat},{lon});
+                  node["shop"="chemist"](around:{radius},{lat},{lon});
+                );
+                out center;
+                """
+
+                response = self.session.post(overpass_url, data={'data': overpass_query}, timeout=30)
                 response.raise_for_status()
                 data = response.json()
+
                 pharmacies = []
-                for item in data:
+                for element in data.get('elements', []):
+                    # Get coordinates
+                    if element.get('type') == 'way':
+                        elem_lat = element.get('center', {}).get('lat', 0)
+                        elem_lon = element.get('center', {}).get('lon', 0)
+                    else:
+                        elem_lat = element.get('lat', 0)
+                        elem_lon = element.get('lon', 0)
+
+                    tags = element.get('tags', {})
+
+                    # Build name
+                    name = tags.get('name', tags.get('brand', 'Pharmacy'))
+
+                    # Build address
+                    address_parts = []
+                    if tags.get('addr:housenumber'):
+                        address_parts.append(tags.get('addr:housenumber'))
+                    if tags.get('addr:street'):
+                        address_parts.append(tags.get('addr:street'))
+                    if tags.get('addr:city'):
+                        address_parts.append(tags.get('addr:city'))
+                    if tags.get('addr:state'):
+                        address_parts.append(tags.get('addr:state'))
+                    if tags.get('addr:postcode'):
+                        address_parts.append(tags.get('addr:postcode'))
+
+                    address = ', '.join(address_parts) if address_parts else 'Address not available'
+
+                    # Calculate distance
+                    distance = self._calculate_distance(lat, lon, elem_lat, elem_lon)
+
+                    # Get additional info
+                    phone = tags.get('phone', tags.get('contact:phone', ''))
+                    website = tags.get('website', tags.get('contact:website', ''))
+                    opening_hours = tags.get('opening_hours', '')
+
                     pharmacies.append({
-                        'name': item.get('display_name', 'Pharmacy').split(',')[0],
-                        'address': item.get('display_name', ''),
-                        'latitude': float(item.get('lat', 0)),
-                        'longitude': float(item.get('lon', 0)),
-                        'distance_km': self._calculate_distance(lat, lon, float(item.get('lat', 0)), float(item.get('lon', 0)))
+                        'name': name,
+                        'address': address,
+                        'latitude': elem_lat,
+                        'longitude': elem_lon,
+                        'distance_km': distance,
+                        'distance_miles': distance * 0.621371,
+                        'phone': phone,
+                        'website': website,
+                        'opening_hours': opening_hours
                     })
+
+                # Sort by distance
                 pharmacies.sort(key=lambda x: x['distance_km'])
-                return {'pharmacies': pharmacies[:10], 'count': len(pharmacies)}
-            except:
-                return {'error': 'Pharmacy search failed', 'pharmacies': []}
+
+                return {
+                    'pharmacies': pharmacies[:15],
+                    'count': len(pharmacies),
+                    'location': {'lat': lat, 'lon': lon},
+                    'radius_km': radius / 1000,
+                    'drug_searched': drug_name
+                }
+            except Exception as e:
+                return {'error': f'Pharmacy search failed: {str(e)}', 'pharmacies': []}
 
         def geocode_address(self, address: str) -> Dict:
+            """Convert address/ZIP code to coordinates with improved accuracy"""
             try:
+                # Clean up the address
+                address = address.strip()
+
+                # If it looks like a ZIP code, add USA context
+                if address.isdigit() and len(address) == 5:
+                    address = f"{address}, USA"
+
                 endpoint = "https://nominatim.openstreetmap.org/search"
-                params = {'q': address, 'format': 'json', 'limit': 1}
-                headers = {'User-Agent': 'MedAI/1.0'}
-                response = self.session.get(endpoint, params=params, headers=headers, timeout=10)
+                params = {
+                    'q': address,
+                    'format': 'json',
+                    'limit': 1,
+                    'addressdetails': 1,
+                    'countrycodes': 'us'  # Prioritize US results
+                }
+
+                response = self.session.get(endpoint, params=params, timeout=10)
                 response.raise_for_status()
                 data = response.json()
+
                 if data:
-                    return {'success': True, 'latitude': float(data[0].get('lat', 0)), 'longitude': float(data[0].get('lon', 0)), 'display_name': data[0].get('display_name', address)}
-                return {'success': False, 'error': 'Address not found'}
+                    location = data[0]
+                    addr_details = location.get('address', {})
+
+                    # Build a clean display name
+                    display_parts = []
+                    if addr_details.get('city') or addr_details.get('town') or addr_details.get('village'):
+                        display_parts.append(addr_details.get('city') or addr_details.get('town') or addr_details.get('village'))
+                    if addr_details.get('state'):
+                        display_parts.append(addr_details.get('state'))
+                    if addr_details.get('postcode'):
+                        display_parts.append(addr_details.get('postcode'))
+
+                    display_name = ', '.join(display_parts) if display_parts else location.get('display_name', address)
+
+                    return {
+                        'success': True,
+                        'latitude': float(location.get('lat', 0)),
+                        'longitude': float(location.get('lon', 0)),
+                        'display_name': display_name,
+                        'city': addr_details.get('city') or addr_details.get('town') or addr_details.get('village', ''),
+                        'state': addr_details.get('state', ''),
+                        'postcode': addr_details.get('postcode', '')
+                    }
+                return {'success': False, 'error': 'Location not found. Please try a different address or ZIP code.'}
             except Exception as e:
-                return {'success': False, 'error': str(e)}
+                return {'success': False, 'error': f'Geocoding failed: {str(e)}'}
 
         def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+            """Calculate distance between two coordinates in kilometers (Haversine formula)"""
             import math
             R = 6371
             lat1_rad, lat2_rad = math.radians(lat1), math.radians(lat2)
@@ -2358,64 +2460,136 @@ IMPORTANT: This is for educational purposes. Always recommend consulting healthc
         st.markdown("""
             <div class="glass-card">
                 <h3>📍 Find Nearby Pharmacies</h3>
-                <p>Locate pharmacies near you. Enter your ZIP code or address to find the closest locations.</p>
+                <p>Locate pharmacies near you. Enter your ZIP code or full address to find the closest pharmacy locations with contact information.</p>
             </div>
         """, unsafe_allow_html=True)
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns([2, 2, 1])
 
         with col1:
-            address = st.text_input("Enter ZIP code or address", placeholder="10001 or 123 Main St, New York, NY", key="pharmacy_address")
+            address = st.text_input(
+                "Enter ZIP code or address",
+                placeholder="e.g., 90210 or 123 Main St, Los Angeles, CA",
+                key="pharmacy_address",
+                help="Enter a 5-digit ZIP code or full street address"
+            )
 
         with col2:
-            drug_needed = st.text_input("Medication needed (optional)", placeholder="Metformin", key="pharmacy_drug")
+            drug_needed = st.text_input(
+                "Medication needed (optional)",
+                placeholder="e.g., Metformin",
+                key="pharmacy_drug"
+            )
 
-        if st.button("🔍 Find Pharmacies", key="pharmacy_btn"):
+        with col3:
+            search_radius = st.selectbox(
+                "Search radius",
+                options=["5 miles", "10 miles", "15 miles", "25 miles"],
+                index=1,
+                key="pharmacy_radius"
+            )
+
+        # Convert miles to meters for API
+        radius_map = {"5 miles": 8000, "10 miles": 16000, "15 miles": 24000, "25 miles": 40000}
+        radius_meters = radius_map.get(search_radius, 16000)
+
+        if st.button("🔍 Find Pharmacies", key="pharmacy_btn", use_container_width=True):
             if address:
-                with st.spinner("Finding nearby pharmacies..."):
+                with st.spinner("📍 Locating your area and searching for pharmacies..."):
                     # Geocode address
                     geocode = clients['pharmacy'].geocode_address(address)
 
                     if geocode.get('success'):
                         lat, lon = geocode['latitude'], geocode['longitude']
-                        result = clients['pharmacy'].find_nearby_pharmacies(lat, lon, drug_needed)
+
+                        # Show location confirmation
+                        location_display = geocode.get('display_name', address)
+                        st.markdown(f"""
+                            <div class="info-box">
+                                📍 Searching near: <strong>{location_display}</strong>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                        result = clients['pharmacy'].find_nearby_pharmacies(lat, lon, drug_needed, radius=radius_meters)
 
                         if result.get('pharmacies'):
+                            pharmacy_count = len(result['pharmacies'])
                             st.markdown(f"""
                                 <div class="success-box">
-                                    ✅ Found {len(result['pharmacies'])} pharmacies near <strong>{geocode.get('display_name', address)}</strong>
+                                    ✅ Found <strong>{pharmacy_count}</strong> pharmacies within {search_radius} of your location
                                 </div>
                             """, unsafe_allow_html=True)
 
-                            for pharm in result['pharmacies']:
-                                distance = pharm.get('distance_km', 0)
+                            for idx, pharm in enumerate(result['pharmacies'], 1):
+                                distance_miles = pharm.get('distance_miles', pharm.get('distance_km', 0) * 0.621371)
+                                distance_km = pharm.get('distance_km', 0)
+                                name = pharm.get('name', 'Pharmacy')
+                                address_text = pharm.get('address', 'Address not available')
+                                phone = pharm.get('phone', '')
+                                website = pharm.get('website', '')
+                                hours = pharm.get('opening_hours', '')
+
+                                # Build additional info line
+                                extra_info = []
+                                if phone:
+                                    extra_info.append(f"📞 {phone}")
+                                if hours:
+                                    extra_info.append(f"🕐 {hours}")
+
+                                extra_html = f'<p style="color: #64748b; font-size: 0.85rem; margin-top: 8px;">{" • ".join(extra_info)}</p>' if extra_info else ''
+
+                                website_html = f'<a href="{website}" target="_blank" style="color: #8b5cf6; font-size: 0.85rem; text-decoration: none;">🌐 Website</a>' if website else ''
+
                                 st.markdown(f"""
                                     <div class="pharmacy-card">
-                                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                                            <div>
-                                                <h4 style="color: #22c55e; margin: 0 0 8px 0;">🏥 {pharm.get('name', 'Pharmacy')}</h4>
-                                                <p style="color: #94a3b8; margin: 0;">{pharm.get('address', '')[:100]}</p>
+                                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 20px;">
+                                            <div style="flex: 1;">
+                                                <h4 style="color: #22c55e; margin: 0 0 8px 0;">
+                                                    <span style="color: #64748b; font-size: 0.9rem;">#{idx}</span> 🏥 {name}
+                                                </h4>
+                                                <p style="color: #cbd5e1; margin: 0; font-size: 0.95rem;">{address_text}</p>
+                                                {extra_html}
+                                                {website_html}
                                             </div>
-                                            <div style="text-align: right;">
-                                                <span style="color: #8b5cf6; font-weight: 600; font-size: 1.1rem;">
-                                                    📍 {distance:.1f} km
+                                            <div style="text-align: right; min-width: 100px;">
+                                                <span style="color: #8b5cf6; font-weight: 700; font-size: 1.2rem;">
+                                                    {distance_miles:.1f} mi
                                                 </span>
+                                                <p style="color: #64748b; font-size: 0.8rem; margin: 4px 0 0 0;">
+                                                    ({distance_km:.1f} km)
+                                                </p>
                                             </div>
                                         </div>
                                     </div>
                                 """, unsafe_allow_html=True)
-                        else:
+
+                            # Add note about data source
                             st.markdown("""
+                                <p style="color: #64748b; font-size: 0.8rem; text-align: center; margin-top: 20px;">
+                                    📊 Data sourced from OpenStreetMap. Some pharmacies may not be listed.
+                                    For the most accurate results, also check Google Maps or call ahead.
+                                </p>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
                                 <div class="warning-box">
-                                    No pharmacies found in this area. Try a different location.
+                                    <strong>No pharmacies found within {search_radius}.</strong><br>
+                                    Try increasing the search radius or entering a different location.
                                 </div>
                             """, unsafe_allow_html=True)
                     else:
                         st.markdown(f"""
                             <div class="danger-box">
-                                Could not find location: {geocode.get('error', 'Unknown error')}. Please try a different address.
+                                <strong>Could not find location.</strong><br>
+                                {geocode.get('error', 'Please check your ZIP code or address and try again.')}
                             </div>
                         """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                    <div class="info-box">
+                        Please enter a ZIP code or address to search for pharmacies.
+                    </div>
+                """, unsafe_allow_html=True)
 
     # ========================================
     # FOOTER
