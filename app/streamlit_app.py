@@ -8,6 +8,7 @@ import os
 import requests
 import tempfile
 import re
+import math
 from typing import Dict, List, Optional
 from datetime import datetime
 import xml.etree.ElementTree as ET
@@ -255,49 +256,74 @@ if not APIS_IMPORTED:
             return {'disease': disease_name, 'suggested_medications': []}
 
     class PharmacyFinderClient:
-        """Client for finding pharmacies using Overpass API for accurate results"""
+        """Client for finding pharmacies using Overpass API with bounding box"""
         def __init__(self):
             self.session = requests.Session()
-            self.session.headers.update({'User-Agent': 'MedAI-ClinicalSupport/1.0'})
+            self.session.headers.update({'User-Agent': 'MedAI-ClinicalSupport/1.0 (Clinical Decision Support App)'})
 
         def find_nearby_pharmacies(self, lat: float, lon: float, drug_name: str = None, radius: int = 8000) -> Dict:
-            """Find pharmacies within radius (meters) using Overpass API"""
+            """Find pharmacies within radius (meters) using Overpass API with bounding box"""
             try:
-                # Use Overpass API for accurate POI search
+                # Convert radius to degrees (approximate)
+                # 1 degree latitude = ~111km, 1 degree longitude varies by latitude
+                radius_km = radius / 1000
+                lat_offset = radius_km / 111.0
+                lon_offset = radius_km / (111.0 * abs(math.cos(math.radians(lat))) + 0.001)
+
+                # Create bounding box: south, west, north, east
+                south = lat - lat_offset
+                north = lat + lat_offset
+                west = lon - lon_offset
+                east = lon + lon_offset
+
+                # Use Overpass API with bounding box for precise results
                 overpass_url = "https://overpass-api.de/api/interpreter"
 
-                # Query for pharmacies within radius
+                # Query using bounding box - more reliable than 'around'
                 overpass_query = f"""
-                [out:json][timeout:25];
-                (
-                  node["amenity"="pharmacy"](around:{radius},{lat},{lon});
-                  way["amenity"="pharmacy"](around:{radius},{lat},{lon});
-                  node["healthcare"="pharmacy"](around:{radius},{lat},{lon});
-                  node["shop"="chemist"](around:{radius},{lat},{lon});
-                );
-                out center;
-                """
+[out:json][timeout:30];
+(
+  node["amenity"="pharmacy"]({south},{west},{north},{east});
+  way["amenity"="pharmacy"]({south},{west},{north},{east});
+  node["healthcare"="pharmacy"]({south},{west},{north},{east});
+  node["shop"="chemist"]({south},{west},{north},{east});
+);
+out body center;
+"""
 
-                response = self.session.post(overpass_url, data={'data': overpass_query}, timeout=30)
+                response = self.session.post(overpass_url, data={'data': overpass_query}, timeout=35)
                 response.raise_for_status()
                 data = response.json()
 
                 pharmacies = []
+                max_distance_km = radius_km * 1.2  # Allow 20% buffer
+
                 for element in data.get('elements', []):
                     # Get coordinates
                     if element.get('type') == 'way':
-                        elem_lat = element.get('center', {}).get('lat', 0)
-                        elem_lon = element.get('center', {}).get('lon', 0)
+                        elem_lat = element.get('center', {}).get('lat')
+                        elem_lon = element.get('center', {}).get('lon')
                     else:
-                        elem_lat = element.get('lat', 0)
-                        elem_lon = element.get('lon', 0)
+                        elem_lat = element.get('lat')
+                        elem_lon = element.get('lon')
+
+                    # Skip if no valid coordinates
+                    if elem_lat is None or elem_lon is None:
+                        continue
+
+                    # Calculate distance and strictly filter
+                    distance = self._calculate_distance(lat, lon, elem_lat, elem_lon)
+
+                    # STRICT FILTER: Skip any results beyond the search radius
+                    if distance > max_distance_km:
+                        continue
 
                     tags = element.get('tags', {})
 
-                    # Build name
-                    name = tags.get('name', tags.get('brand', 'Pharmacy'))
+                    # Build name - prioritize specific pharmacy names
+                    name = tags.get('name') or tags.get('brand') or tags.get('operator') or 'Pharmacy'
 
-                    # Build address
+                    # Build address from tags
                     address_parts = []
                     if tags.get('addr:housenumber'):
                         address_parts.append(tags.get('addr:housenumber'))
@@ -310,23 +336,27 @@ if not APIS_IMPORTED:
                     if tags.get('addr:postcode'):
                         address_parts.append(tags.get('addr:postcode'))
 
-                    address = ', '.join(address_parts) if address_parts else 'Address not available'
+                    address = ', '.join(address_parts) if address_parts else None
 
-                    # Calculate distance
-                    distance = self._calculate_distance(lat, lon, elem_lat, elem_lon)
+                    # If no address from tags, try reverse geocoding for first few results
+                    if not address and len(pharmacies) < 10:
+                        address = self._reverse_geocode(elem_lat, elem_lon)
+
+                    if not address:
+                        address = f"Near {lat:.4f}, {lon:.4f}"
 
                     # Get additional info
-                    phone = tags.get('phone', tags.get('contact:phone', ''))
-                    website = tags.get('website', tags.get('contact:website', ''))
-                    opening_hours = tags.get('opening_hours', '')
+                    phone = tags.get('phone') or tags.get('contact:phone') or ''
+                    website = tags.get('website') or tags.get('contact:website') or ''
+                    opening_hours = tags.get('opening_hours') or ''
 
                     pharmacies.append({
                         'name': name,
                         'address': address,
                         'latitude': elem_lat,
                         'longitude': elem_lon,
-                        'distance_km': distance,
-                        'distance_miles': distance * 0.621371,
+                        'distance_km': round(distance, 2),
+                        'distance_miles': round(distance * 0.621371, 2),
                         'phone': phone,
                         'website': website,
                         'opening_hours': opening_hours
@@ -339,11 +369,36 @@ if not APIS_IMPORTED:
                     'pharmacies': pharmacies[:15],
                     'count': len(pharmacies),
                     'location': {'lat': lat, 'lon': lon},
-                    'radius_km': radius / 1000,
+                    'radius_km': radius_km,
                     'drug_searched': drug_name
                 }
             except Exception as e:
                 return {'error': f'Pharmacy search failed: {str(e)}', 'pharmacies': []}
+
+        def _reverse_geocode(self, lat: float, lon: float) -> Optional[str]:
+            """Get address from coordinates"""
+            try:
+                endpoint = "https://nominatim.openstreetmap.org/reverse"
+                params = {'lat': lat, 'lon': lon, 'format': 'json', 'addressdetails': 1}
+                response = self.session.get(endpoint, params=params, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    addr = data.get('address', {})
+                    parts = []
+                    if addr.get('house_number'):
+                        parts.append(addr['house_number'])
+                    if addr.get('road'):
+                        parts.append(addr['road'])
+                    if addr.get('city') or addr.get('town') or addr.get('village'):
+                        parts.append(addr.get('city') or addr.get('town') or addr.get('village'))
+                    if addr.get('state'):
+                        parts.append(addr['state'])
+                    if addr.get('postcode'):
+                        parts.append(addr['postcode'])
+                    return ', '.join(parts) if parts else None
+            except:
+                pass
+            return None
 
         def geocode_address(self, address: str) -> Dict:
             """Convert address/ZIP code to coordinates with improved accuracy"""
@@ -398,8 +453,7 @@ if not APIS_IMPORTED:
 
         def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
             """Calculate distance between two coordinates in kilometers (Haversine formula)"""
-            import math
-            R = 6371
+            R = 6371  # Earth's radius in km
             lat1_rad, lat2_rad = math.radians(lat1), math.radians(lat2)
             delta_lat, delta_lon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
             a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
