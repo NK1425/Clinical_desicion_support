@@ -1,19 +1,31 @@
-# Core
+# MedAI - Clinical Decision Support System
+# Optimized for Streamlit Cloud deployment
+
+# Core Web Framework
 streamlit>=1.30.0
+
+# HTTP Requests (for API calls)
 requests>=2.31.0
-
-# LLM (optional)
-openai>=1.10.0
-
-# Embeddings & Vector Store
-sentence-transformers>=2.6.0
-faiss-cpu>=1.8.0
 
 # Data Processing
 pandas>=2.0.0
 numpy>=1.24.0
 
-# Utilities
+# Configuration
 python-dotenv>=1.0.0
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
+
+# Optional: LLM Integration
+openai>=1.10.0
+
+# Optional: Embeddings & Vector Store (comment out for lightweight deployment)
+# sentence-transformers>=2.6.0
+# faiss-cpu>=1.8.0
+
+# Optional: Image Processing (comment out for lightweight deployment)
+# Pillow>=10.0.0
+# transformers>=4.30.0
+# torch>=2.0.0
+
+# Optional: Configuration validation
+# pydantic>=2.5.0
+# pydantic-settings>=2.1.0
