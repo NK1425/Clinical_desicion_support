@@ -10,29 +10,345 @@ import tempfile
 import re
 from typing import Dict, List, Optional
 from datetime import datetime
+import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Fix path for Streamlit Cloud
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
-from src.medical_apis import (
-    get_fda_client, get_pubmed_client, get_rxnorm_client,
-    get_medical_aggregator, get_clinical_trials_client,
-    get_disease_client, get_pharmacy_finder
-)
+# Try to import medical_apis, fall back to inline implementation if not available
+try:
+    from src.medical_apis import (
+        get_fda_client, get_pubmed_client, get_rxnorm_client,
+        get_medical_aggregator, get_clinical_trials_client,
+        get_disease_client, get_pharmacy_finder
+    )
+    APIS_IMPORTED = True
+except ImportError:
+    APIS_IMPORTED = False
 
 # Optional imports
+IMAGE_PROCESSOR_AVAILABLE = False
+get_image_processor = None
+RAG_AVAILABLE = False
+get_rag_pipeline = None
+
 try:
     from src.image_processor import get_image_processor
     IMAGE_PROCESSOR_AVAILABLE = True
 except ImportError:
-    IMAGE_PROCESSOR_AVAILABLE = False
-    get_image_processor = None
+    pass
 
 try:
     from src.rag_pipeline import get_rag_pipeline
     RAG_AVAILABLE = True
 except ImportError:
-    RAG_AVAILABLE = False
-    get_rag_pipeline = None
+    pass
+
+
+# ========================================
+# INLINE API CLIENTS (Fallback if import fails)
+# ========================================
+if not APIS_IMPORTED:
+    class OpenFDAClient:
+        """Client for openFDA API"""
+        BASE_URL = "https://api.fda.gov"
+
+        def __init__(self):
+            self.session = requests.Session()
+
+        def search_drug(self, drug_name: str, limit: int = 5) -> Dict:
+            endpoint = f"{self.BASE_URL}/drug/label.json"
+            params = {
+                'search': f'openfda.brand_name:"{drug_name}" OR openfda.generic_name:"{drug_name}"',
+                'limit': limit
+            }
+            try:
+                response = self.session.get(endpoint, params=params, timeout=10)
+                response.raise_for_status()
+                return response.json()
+            except:
+                return {'error': 'API request failed', 'results': []}
+
+        def get_adverse_events(self, drug_name: str, limit: int = 10) -> Dict:
+            endpoint = f"{self.BASE_URL}/drug/event.json"
+            params = {'search': f'patient.drug.medicinalproduct:"{drug_name}"', 'limit': limit}
+            try:
+                response = self.session.get(endpoint, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                events = []
+                if 'results' in data:
+                    for result in data['results']:
+                        for reaction in result.get('patient', {}).get('reaction', []):
+                            events.append(reaction.get('reactionmeddrapt', 'Unknown'))
+                return {'drug_name': drug_name, 'adverse_events': list(set(events))[:20]}
+            except:
+                return {'error': 'API request failed'}
+
+        def get_drug_info_summary(self, drug_name: str) -> Dict:
+            drug_data = self.search_drug(drug_name, limit=1)
+            adverse = self.get_adverse_events(drug_name, limit=5)
+            summary = {
+                'drug_name': drug_name, 'found': False, 'indications': [], 'dosage': [],
+                'warnings': [], 'contraindications': [], 'interactions': [], 'common_adverse_events': []
+            }
+            if 'results' in drug_data and len(drug_data['results']) > 0:
+                result = drug_data['results'][0]
+                summary['found'] = True
+                summary['indications'] = result.get('indications_and_usage', ['Not available'])
+                summary['dosage'] = result.get('dosage_and_administration', ['Not available'])
+                summary['warnings'] = result.get('warnings', ['Not available'])
+                summary['contraindications'] = result.get('contraindications', ['Not available'])
+                summary['interactions'] = result.get('drug_interactions', ['Not available'])
+            if 'adverse_events' in adverse:
+                summary['common_adverse_events'] = adverse['adverse_events']
+            return summary
+
+    class PubMedClient:
+        """Client for PubMed API"""
+        BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+
+        def __init__(self):
+            self.session = requests.Session()
+
+        def search_articles(self, query: str, max_results: int = 5, recent_only: bool = False) -> Dict:
+            search_url = f"{self.BASE_URL}/esearch.fcgi"
+            enhanced_query = query
+            if recent_only:
+                from datetime import datetime
+                year = datetime.now().year
+                enhanced_query = f"({query}) AND ({year - 5}[PDAT] : {year}[PDAT])"
+            params = {'db': 'pubmed', 'term': enhanced_query, 'retmax': min(max_results, 50), 'retmode': 'json', 'sort': 'relevance'}
+            try:
+                response = self.session.get(search_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                ids = data.get('esearchresult', {}).get('idlist', [])
+                if not ids:
+                    return {'query': query, 'articles': [], 'count': 0}
+                articles = self._fetch_article_details(ids)
+                return {'query': query, 'articles': articles, 'count': len(articles)}
+            except:
+                return {'error': 'PubMed API request failed', 'articles': []}
+
+        def _fetch_article_details(self, ids: List[str]) -> List[Dict]:
+            fetch_url = f"{self.BASE_URL}/efetch.fcgi"
+            params = {'db': 'pubmed', 'id': ','.join(ids), 'retmode': 'xml'}
+            try:
+                response = self.session.get(fetch_url, params=params, timeout=15)
+                response.raise_for_status()
+                articles = []
+                root = ET.fromstring(response.content)
+                for article in root.findall('.//PubmedArticle'):
+                    title_elem = article.find('.//ArticleTitle')
+                    abstract_elem = article.find('.//AbstractText')
+                    year_elem = article.find('.//PubDate/Year')
+                    journal_elem = article.find('.//Journal/Title')
+                    pmid_elem = article.find('.//PMID')
+                    articles.append({
+                        'title': title_elem.text if title_elem is not None else 'No title',
+                        'abstract': (abstract_elem.text[:500] + '...' if abstract_elem is not None and abstract_elem.text and len(abstract_elem.text) > 500
+                                    else (abstract_elem.text if abstract_elem is not None and abstract_elem.text else 'No abstract')),
+                        'year': year_elem.text if year_elem is not None else 'Unknown',
+                        'journal': journal_elem.text if journal_elem is not None else 'Unknown',
+                        'pmid': pmid_elem.text if pmid_elem is not None else None,
+                        'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid_elem.text}/" if pmid_elem is not None else None
+                    })
+                return articles
+            except:
+                return []
+
+    class RxNormClient:
+        """Client for RxNorm API"""
+        BASE_URL = "https://rxnav.nlm.nih.gov/REST"
+
+        def __init__(self):
+            self.session = requests.Session()
+
+        def get_drug_info(self, drug_name: str) -> Dict:
+            search_url = f"{self.BASE_URL}/drugs.json"
+            params = {'name': drug_name}
+            try:
+                response = self.session.get(search_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                concepts = data.get('drugGroup', {}).get('conceptGroup', [])
+                drugs = []
+                for group in concepts:
+                    if 'conceptProperties' in group:
+                        for prop in group['conceptProperties']:
+                            drugs.append({'rxcui': prop.get('rxcui'), 'name': prop.get('name')})
+                return {'drug_name': drug_name, 'found': len(drugs) > 0, 'drugs': drugs[:5]}
+            except:
+                return {'error': 'RxNorm API request failed'}
+
+        def get_interactions(self, drug_names: List[str]) -> Dict:
+            rxcuis = []
+            for drug in drug_names:
+                info = self.get_drug_info(drug)
+                if info.get('drugs'):
+                    rxcuis.append(info['drugs'][0]['rxcui'])
+            if len(rxcuis) < 2:
+                return {'interactions': [], 'message': 'Need at least 2 valid drugs'}
+            interaction_url = f"{self.BASE_URL}/interaction/list.json"
+            params = {'rxcuis': '+'.join(rxcuis)}
+            try:
+                response = self.session.get(interaction_url, params=params, timeout=15)
+                response.raise_for_status()
+                data = response.json()
+                interactions = []
+                for group in data.get('fullInteractionTypeGroup', []):
+                    for itype in group.get('fullInteractionType', []):
+                        for pair in itype.get('interactionPair', []):
+                            interactions.append({
+                                'severity': pair.get('severity', 'Unknown'),
+                                'description': pair.get('description', 'No description'),
+                                'drugs': [d.get('minConceptItem', {}).get('name', 'Unknown') for d in pair.get('interactionConcept', [])]
+                            })
+                return {'drug_names': drug_names, 'interactions_found': len(interactions) > 0, 'interactions': interactions}
+            except:
+                return {'error': 'Interaction check failed', 'interactions': []}
+
+    class ClinicalTrialsClient:
+        """Client for ClinicalTrials.gov API"""
+        BASE_URL = "https://clinicaltrials.gov/api/v2"
+
+        def __init__(self):
+            self.session = requests.Session()
+
+        def search_trials(self, condition: str, status: str = "RECRUITING", limit: int = 10) -> Dict:
+            endpoint = f"{self.BASE_URL}/studies"
+            params = {'query.cond': condition, 'filter.overallStatus': status, 'pageSize': limit, 'format': 'json'}
+            try:
+                response = self.session.get(endpoint, params=params, timeout=15)
+                response.raise_for_status()
+                data = response.json()
+                trials = []
+                for study in data.get('studies', [])[:limit]:
+                    protocol = study.get('protocolSection', {})
+                    identification = protocol.get('identificationModule', {})
+                    status_module = protocol.get('statusModule', {})
+                    desc = protocol.get('descriptionModule', {})
+                    trials.append({
+                        'nct_id': identification.get('nctId', ''),
+                        'title': identification.get('briefTitle', 'No title'),
+                        'status': status_module.get('overallStatus', 'Unknown'),
+                        'phase': status_module.get('phases', []),
+                        'summary': desc.get('briefSummary', ''),
+                        'url': f"https://clinicaltrials.gov/study/{identification.get('nctId', '')}"
+                    })
+                return {'condition': condition, 'trials': trials, 'count': len(trials)}
+            except:
+                return {'error': 'ClinicalTrials API request failed', 'trials': []}
+
+    class DiseaseInfoClient:
+        """Client for disease information"""
+        def __init__(self):
+            self.session = requests.Session()
+
+        def get_disease_info(self, disease_name: str) -> Dict:
+            return {'disease_name': disease_name, 'research_articles': []}
+
+        def suggest_medications(self, disease_name: str) -> Dict:
+            return {'disease': disease_name, 'suggested_medications': []}
+
+    class PharmacyFinderClient:
+        """Client for finding pharmacies"""
+        def __init__(self):
+            self.session = requests.Session()
+
+        def find_nearby_pharmacies(self, lat: float, lon: float, drug_name: str = None, radius: int = 10000) -> Dict:
+            try:
+                endpoint = "https://nominatim.openstreetmap.org/search"
+                params = {'q': 'pharmacy', 'format': 'json', 'lat': lat, 'lon': lon, 'limit': 10, 'addressdetails': 1}
+                headers = {'User-Agent': 'MedAI/1.0'}
+                response = self.session.get(endpoint, params=params, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                pharmacies = []
+                for item in data:
+                    pharmacies.append({
+                        'name': item.get('display_name', 'Pharmacy').split(',')[0],
+                        'address': item.get('display_name', ''),
+                        'latitude': float(item.get('lat', 0)),
+                        'longitude': float(item.get('lon', 0)),
+                        'distance_km': self._calculate_distance(lat, lon, float(item.get('lat', 0)), float(item.get('lon', 0)))
+                    })
+                pharmacies.sort(key=lambda x: x['distance_km'])
+                return {'pharmacies': pharmacies[:10], 'count': len(pharmacies)}
+            except:
+                return {'error': 'Pharmacy search failed', 'pharmacies': []}
+
+        def geocode_address(self, address: str) -> Dict:
+            try:
+                endpoint = "https://nominatim.openstreetmap.org/search"
+                params = {'q': address, 'format': 'json', 'limit': 1}
+                headers = {'User-Agent': 'MedAI/1.0'}
+                response = self.session.get(endpoint, params=params, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                if data:
+                    return {'success': True, 'latitude': float(data[0].get('lat', 0)), 'longitude': float(data[0].get('lon', 0)), 'display_name': data[0].get('display_name', address)}
+                return {'success': False, 'error': 'Address not found'}
+            except Exception as e:
+                return {'success': False, 'error': str(e)}
+
+        def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+            import math
+            R = 6371
+            lat1_rad, lat2_rad = math.radians(lat1), math.radians(lat2)
+            delta_lat, delta_lon = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+            a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
+            return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    # Singleton getters
+    _fda_client = None
+    _pubmed_client = None
+    _rxnorm_client = None
+    _trials_client = None
+    _disease_client = None
+    _pharmacy_finder = None
+
+    def get_fda_client():
+        global _fda_client
+        if _fda_client is None:
+            _fda_client = OpenFDAClient()
+        return _fda_client
+
+    def get_pubmed_client():
+        global _pubmed_client
+        if _pubmed_client is None:
+            _pubmed_client = PubMedClient()
+        return _pubmed_client
+
+    def get_rxnorm_client():
+        global _rxnorm_client
+        if _rxnorm_client is None:
+            _rxnorm_client = RxNormClient()
+        return _rxnorm_client
+
+    def get_clinical_trials_client():
+        global _trials_client
+        if _trials_client is None:
+            _trials_client = ClinicalTrialsClient()
+        return _trials_client
+
+    def get_disease_client():
+        global _disease_client
+        if _disease_client is None:
+            _disease_client = DiseaseInfoClient()
+        return _disease_client
+
+    def get_pharmacy_finder():
+        global _pharmacy_finder
+        if _pharmacy_finder is None:
+            _pharmacy_finder = PharmacyFinderClient()
+        return _pharmacy_finder
+
+    def get_medical_aggregator():
+        return None
 
 st.set_page_config(
     page_title="MedAI - Clinical Intelligence",
