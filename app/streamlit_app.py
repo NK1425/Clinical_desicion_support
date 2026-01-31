@@ -1068,10 +1068,11 @@ DISEASE_ALIASES = {
 # ========================================
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-* {
-    font-family: 'SF Pro Display', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+/* Apply font only to text elements, not icons */
+body, p, h1, h2, h3, h4, h5, h6, span, div, input, textarea, button, label, a {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 /* Hide Streamlit defaults */
@@ -1511,13 +1512,10 @@ st.markdown("""
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
 
-/* Expanders */
-.streamlit-expanderHeader {
-    background: rgba(255, 255, 255, 0.02) !important;
-    border-radius: 16px !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    color: #e2e8f0 !important;
-    font-weight: 500 !important;
+/* Expanders - minimal styling to avoid conflicts */
+[data-testid="stExpander"] {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
 }
 
 /* Pharmacy Card */
