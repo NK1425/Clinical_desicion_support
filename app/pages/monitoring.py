@@ -1,192 +1,252 @@
 """
-Streamlit Monitoring Dashboard
-Real-time system health, query latency, and knowledge base statistics.
+System Monitoring Dashboard
+Real-time health, performance, and knowledge base statistics.
 """
 import streamlit as st
 import requests
 import time
-import json
 import os
 import sys
+from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 st.set_page_config(page_title="CDSS Monitoring", page_icon="📊", layout="wide")
 
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+# ── Custom CSS matching the main app style ──
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+* { font-family: 'Inter', sans-serif; }
+.monitor-header {
+    font-size: 2rem; font-weight: 700;
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    text-align: center; margin-bottom: 0.5rem;
+}
+.monitor-subtitle {
+    text-align: center; color: #94a3b8; margin-bottom: 2rem; font-size: 1rem;
+}
+.status-card {
+    background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 12px; padding: 1.5rem; margin: 0.5rem 0;
+}
+.status-online { color: #22c55e; font-weight: 600; }
+.status-offline { color: #ef4444; font-weight: 600; }
+.status-warning { color: #eab308; font-weight: 600; }
+</style>
+""", unsafe_allow_html=True)
 
 
-def fetch_health():
-    """Fetch health status from API."""
+def check_api_status(name, url, timeout=5):
+    """Check if an API endpoint is reachable."""
     try:
-        resp = requests.get(f"{API_URL}/api/health", timeout=5)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.RequestException:
-        return None
+        resp = requests.get(url, timeout=timeout)
+        return {
+            "status": "online",
+            "response_time_ms": round(resp.elapsed.total_seconds() * 1000),
+            "status_code": resp.status_code,
+        }
+    except requests.exceptions.Timeout:
+        return {"status": "timeout", "response_time_ms": timeout * 1000, "status_code": None}
+    except requests.exceptions.RequestException:
+        return {"status": "offline", "response_time_ms": None, "status_code": None}
 
 
-def fetch_stats():
-    """Fetch system stats from API."""
+def check_llm_status():
+    """Check LLM availability."""
+    groq_key = None
+    openai_key = None
+    gemini_key = None
+
+    # Check Streamlit secrets
     try:
-        resp = requests.get(f"{API_URL}/api/stats", timeout=5)
-        resp.raise_for_status()
-        return resp.json().get("data", {})
-    except requests.RequestException:
-        return None
-
-
-def fetch_metrics():
-    """Fetch Prometheus metrics and parse key values."""
+        groq_key = st.secrets.get("GROQ_API_KEY", "")
+    except Exception:
+        pass
     try:
-        resp = requests.get(f"{API_URL}/metrics", timeout=5)
-        resp.raise_for_status()
-        return _parse_prometheus_metrics(resp.text)
-    except requests.RequestException:
-        return None
+        openai_key = st.secrets.get("OPENAI_API_KEY", "")
+    except Exception:
+        pass
+    try:
+        gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+    except Exception:
+        pass
 
+    # Check environment
+    if not groq_key:
+        groq_key = os.getenv("GROQ_API_KEY", "")
+    if not openai_key:
+        openai_key = os.getenv("OPENAI_API_KEY", "")
+    if not gemini_key:
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
 
-def _parse_prometheus_metrics(text: str) -> dict:
-    """Parse Prometheus text format into a simple dict of metric name -> value."""
-    metrics = {}
-    for line in text.strip().split("\n"):
-        if line.startswith("#"):
-            continue
-        parts = line.split(" ")
-        if len(parts) >= 2:
-            try:
-                metrics[parts[0]] = float(parts[1])
-            except ValueError:
-                pass
-    return metrics
+    providers = []
+    if groq_key:
+        providers.append(("Groq (Llama 3.3 70B)", "llama-3.3-70b-versatile"))
+    if openai_key:
+        providers.append(("OpenAI (GPT-4o-mini)", "gpt-4o-mini"))
+    if gemini_key:
+        providers.append(("Google Gemini", "gemini-1.5-flash"))
+
+    return providers
 
 
 def main():
-    st.title("📊 System Monitoring Dashboard")
-    st.caption("Real-time health, performance, and knowledge base metrics")
+    st.markdown('<p class="monitor-header">📊 System Monitoring Dashboard</p>', unsafe_allow_html=True)
+    st.markdown('<p class="monitor-subtitle">Real-time health, performance, and knowledge base metrics</p>', unsafe_allow_html=True)
 
     # Auto-refresh
     auto_refresh = st.sidebar.checkbox("Auto-refresh (30s)", value=False)
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"Last checked: {datetime.now().strftime('%H:%M:%S')}")
+
     if auto_refresh:
-        time.sleep(0.1)
+        time.sleep(30)
         st.rerun()
 
-    # --- Health Status ---
-    st.header("System Health")
-    health = fetch_health()
+    # ── External API Health Checks ──
+    st.markdown("### 🌐 External API Health")
+    st.caption("Live connectivity checks to all medical data sources")
 
-    if health:
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("API Status", "Online", delta="healthy")
-        col2.metric("Knowledge Base", f"{health.get('knowledge_base_docs', 0)} docs")
-        col3.metric("LLM Status", "Active" if health.get("llm_available") else "Offline")
-        col4.metric("LLM Model", health.get("llm_model", "N/A"))
+    apis_to_check = [
+        ("openFDA", "https://api.fda.gov/drug/label.json?limit=1"),
+        ("PubMed (NCBI)", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=test&retmode=json&retmax=1"),
+        ("RxNorm", "https://rxnav.nlm.nih.gov/REST/drugs.json?name=aspirin"),
+        ("ClinicalTrials.gov", "https://clinicaltrials.gov/api/v2/studies?pageSize=1&format=json"),
+        ("Zippopotam.us (Geo)", "https://api.zippopotam.us/us/10001"),
+    ]
+
+    if st.button("🔄 Run Health Checks", type="primary"):
+        cols = st.columns(len(apis_to_check))
+        for i, (name, url) in enumerate(apis_to_check):
+            with cols[i]:
+                with st.spinner(f"Checking {name}..."):
+                    result = check_api_status(name, url)
+
+                if result["status"] == "online" and result["status_code"] == 200:
+                    st.success(f"**{name}**")
+                    st.metric("Response", f"{result['response_time_ms']}ms")
+                elif result["status"] == "timeout":
+                    st.warning(f"**{name}**")
+                    st.caption("Timeout")
+                else:
+                    st.error(f"**{name}**")
+                    st.caption(f"Status: {result['status_code'] or 'unreachable'}")
     else:
-        st.error("API is not reachable. Make sure the API server is running on " + API_URL)
-        st.info("Start the API with: `uvicorn api.main:app --reload`")
+        st.info("Click **Run Health Checks** to test connectivity to all medical APIs.")
 
     st.divider()
 
-    # --- Prometheus Metrics ---
-    st.header("Performance Metrics")
-    metrics = fetch_metrics()
+    # ── LLM Provider Status ──
+    st.markdown("### 🤖 LLM Provider Status")
+    providers = check_llm_status()
 
-    if metrics:
+    if providers:
+        cols = st.columns(len(providers))
+        for i, (name, model) in enumerate(providers):
+            with cols[i]:
+                st.success(f"**{name}**")
+                st.caption(f"Model: `{model}`")
+        st.caption(f"Fallback chain: {' → '.join(p[0].split(' (')[0] for p in providers)} → Retrieval-only")
+    else:
+        st.warning("No LLM API keys configured. The app will work in retrieval-only mode.")
+        st.caption("Set `GROQ_API_KEY` in Streamlit secrets or environment for AI-powered responses.")
+
+    st.divider()
+
+    # ── Knowledge Base Stats ──
+    st.markdown("### 📚 Knowledge Base")
+
+    try:
+        from src.vector_store import get_vector_store
+        vs = get_vector_store()
+        doc_count = vs.count if hasattr(vs, "count") else 0
+
         col1, col2, col3 = st.columns(3)
+        col1.metric("Total Documents", doc_count)
+        col2.metric("Embedding Model", "all-MiniLM-L6-v2")
+        col3.metric("Vector Store", "FAISS")
 
-        # Request counts
-        total_requests = sum(v for k, v in metrics.items() if k.startswith("cdss_request_count_total"))
-        col1.metric("Total Requests", int(total_requests))
-
-        # Error counts
-        total_errors = sum(v for k, v in metrics.items() if k.startswith("cdss_api_errors_total"))
-        col2.metric("Total Errors", int(total_errors))
-
-        # Knowledge base size
-        kb_size = metrics.get("cdss_knowledge_base_documents_total", 0)
-        col3.metric("KB Documents", int(kb_size))
-
-        # Latency histograms (show sum/count = avg)
-        st.subheader("Latency Averages")
-        latency_data = {}
-
-        req_sum = metrics.get("cdss_request_latency_seconds_sum", 0)
-        req_count = metrics.get("cdss_request_latency_seconds_count", 0)
-        if req_count > 0:
-            latency_data["Request Avg (s)"] = round(req_sum / req_count, 3)
-
-        rag_sum = metrics.get("cdss_rag_retrieval_latency_seconds_sum", 0)
-        rag_count = metrics.get("cdss_rag_retrieval_latency_seconds_count", 0)
-        if rag_count > 0:
-            latency_data["RAG Retrieval Avg (s)"] = round(rag_sum / rag_count, 3)
-
-        llm_sum = metrics.get("cdss_llm_generation_latency_seconds_sum", 0)
-        llm_count = metrics.get("cdss_llm_generation_latency_seconds_count", 0)
-        if llm_count > 0:
-            latency_data["LLM Generation Avg (s)"] = round(llm_sum / llm_count, 3)
-
-        if latency_data:
-            cols = st.columns(len(latency_data))
-            for i, (label, value) in enumerate(latency_data.items()):
-                cols[i].metric(label, f"{value:.3f}s")
-        else:
-            st.info("No latency data yet. Make some queries to generate metrics.")
-    else:
-        st.info("Metrics not available. API may not be running.")
+        if doc_count > 0:
+            try:
+                from src.data_ingestion import get_ingestion_stats
+                local_stats = get_ingestion_stats(vs)
+                if local_stats.get("categories"):
+                    st.subheader("Documents by Category")
+                    import pandas as pd
+                    cat_df = pd.DataFrame(
+                        list(local_stats["categories"].items()),
+                        columns=["Category", "Count"],
+                    ).sort_values("Count", ascending=False)
+                    st.bar_chart(cat_df.set_index("Category"))
+            except Exception:
+                pass
+    except Exception:
+        st.info("Vector store not initialized. Run `python src/init_vectorstore.py` to build the knowledge base.")
 
     st.divider()
 
-    # --- Knowledge Base Stats ---
-    st.header("Knowledge Base")
-    stats = fetch_stats()
+    # ── System Info ──
+    st.markdown("### ⚙️ System Information")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Platform", sys.platform)
+    col2.metric("Python", f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
 
-    if stats:
-        st.json(stats)
-    else:
-        # Fallback: try to read from local vector store
+    # Check key packages
+    pkg_status = {}
+    for pkg in ["langchain", "faiss", "sentence_transformers", "groq", "streamlit"]:
         try:
-            from src.data_ingestion import get_ingestion_stats
-            from src.vector_store import get_vector_store
-            vs = get_vector_store()
-            local_stats = get_ingestion_stats(vs)
-            st.metric("Total Documents", local_stats["total_documents"])
-            st.metric("Unique Sources", local_stats["unique_sources"])
+            mod = __import__(pkg.replace("-", "_"))
+            ver = getattr(mod, "__version__", "installed")
+            pkg_status[pkg] = ver
+        except ImportError:
+            pkg_status[pkg] = "not installed"
 
-            if local_stats.get("categories"):
-                st.subheader("Documents by Category")
-                import pandas as pd
-                cat_df = pd.DataFrame(
-                    list(local_stats["categories"].items()),
-                    columns=["Category", "Count"],
-                ).sort_values("Count", ascending=False)
-                st.bar_chart(cat_df.set_index("Category"))
-        except Exception:
-            st.info("Connect to API or initialize vector store to see knowledge base stats.")
+    col3.metric("LangChain", pkg_status.get("langchain", "?"))
+    col4.metric("Streamlit", pkg_status.get("streamlit", "?"))
+
+    with st.expander("All Package Versions"):
+        for pkg, ver in pkg_status.items():
+            icon = "✅" if ver != "not installed" else "❌"
+            st.text(f"{icon} {pkg}: {ver}")
 
     st.divider()
 
-    # --- Quick API Test ---
-    st.header("Quick API Test")
-    test_query = st.text_input("Test query:", placeholder="e.g., How to manage type 2 diabetes?")
-    if st.button("Send Query"):
-        if test_query:
-            with st.spinner("Querying..."):
-                try:
-                    resp = requests.post(
-                        f"{API_URL}/api/query",
-                        json={"question": test_query},
-                        timeout=30,
-                    )
+    # ── Quick API Test ──
+    st.markdown("### 🧪 Quick Drug Lookup Test")
+    st.caption("Test the openFDA API directly from here")
+
+    test_drug = st.text_input("Drug name:", placeholder="e.g., metformin")
+    if st.button("Test Lookup") and test_drug:
+        with st.spinner(f"Looking up {test_drug}..."):
+            try:
+                resp = requests.get(
+                    "https://api.fda.gov/drug/label.json",
+                    params={"search": f'openfda.generic_name:"{test_drug}"', "limit": 1},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
                     data = resp.json()
-                    if data.get("success"):
-                        st.success("Query successful!")
-                        st.markdown(data["response"])
-                        if data.get("timings"):
-                            st.json(data["timings"])
+                    if data.get("results"):
+                        result = data["results"][0]
+                        st.success(f"Found: {test_drug}")
+                        if result.get("indications_and_usage"):
+                            st.markdown("**Indications:**")
+                            st.write(result["indications_and_usage"][0][:300] + "...")
                     else:
-                        st.error(f"Query failed: {data}")
-                except requests.RequestException as e:
-                    st.error(f"Request failed: {e}")
+                        st.warning(f"No results for '{test_drug}'")
+                else:
+                    st.error(f"API returned status {resp.status_code}")
+            except requests.RequestException as e:
+                st.error(f"Request failed: {e}")
+
+    # Footer
+    st.markdown("---")
+    st.caption("⚠️ For educational purposes only. Not for actual medical decisions.")
 
 
 if __name__ == "__main__":

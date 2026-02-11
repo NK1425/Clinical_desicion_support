@@ -2,6 +2,7 @@
 Medical APIs Module
 Integrates with openFDA, PubMed, and RxNorm for real-time medical information.
 """
+import math
 import requests
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional
@@ -374,3 +375,260 @@ def get_medical_aggregator() -> MedicalDataAggregator:
     if _aggregator is None:
         _aggregator = MedicalDataAggregator()
     return _aggregator
+
+
+class ClinicalTrialsClient:
+    """Client for ClinicalTrials.gov API v2."""
+
+    BASE_URL = "https://clinicaltrials.gov/api/v2"
+
+    def __init__(self):
+        self.session = requests.Session()
+
+    @timed(name="clinicaltrials.search")
+    def search_trials(self, condition: str, status: str = "RECRUITING", limit: int = 10) -> Dict:
+        """Search for clinical trials by condition."""
+        endpoint = f"{self.BASE_URL}/studies"
+        params = {
+            "query.cond": condition,
+            "filter.overallStatus": status,
+            "pageSize": limit,
+            "format": "json",
+        }
+        try:
+            response = self.session.get(endpoint, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            trials = []
+            for study in data.get("studies", [])[:limit]:
+                protocol = study.get("protocolSection", {})
+                identification = protocol.get("identificationModule", {})
+                status_module = protocol.get("statusModule", {})
+                desc = protocol.get("descriptionModule", {})
+                trials.append({
+                    "nct_id": identification.get("nctId", ""),
+                    "title": identification.get("briefTitle", "No title"),
+                    "status": status_module.get("overallStatus", "Unknown"),
+                    "phase": status_module.get("phases", []),
+                    "summary": desc.get("briefSummary", ""),
+                    "url": f"https://clinicaltrials.gov/study/{identification.get('nctId', '')}",
+                })
+            return {"condition": condition, "trials": trials, "count": len(trials)}
+        except requests.exceptions.RequestException as e:
+            log.error(f"ClinicalTrials search failed: {e}")
+            return {"error": "ClinicalTrials API request failed", "trials": []}
+
+
+class DiseaseInfoClient:
+    """Client for disease information lookups."""
+
+    def __init__(self):
+        self.session = requests.Session()
+
+    def get_disease_info(self, disease_name: str) -> Dict:
+        """Get disease information."""
+        return {"disease_name": disease_name, "research_articles": []}
+
+    def suggest_medications(self, disease_name: str) -> Dict:
+        """Suggest medications for a disease."""
+        return {"disease": disease_name, "suggested_medications": []}
+
+
+class PharmacyFinderClient:
+    """Client for finding US pharmacies including major chains via Overpass API."""
+
+    PHARMACY_CHAINS = {
+        "walgreens": {"name": "Walgreens", "website": "https://www.walgreens.com/storelocator/find.jsp"},
+        "cvs": {"name": "CVS Pharmacy", "website": "https://www.cvs.com/store-locator/landing"},
+        "walmart": {"name": "Walmart Pharmacy", "website": "https://www.walmart.com/store-finder"},
+        "kroger": {"name": "Kroger Pharmacy", "website": "https://www.kroger.com/stores/search"},
+        "rite_aid": {"name": "Rite Aid", "website": "https://www.riteaid.com/locations"},
+        "costco": {"name": "Costco Pharmacy", "website": "https://www.costco.com/warehouse-locations"},
+        "sams_club": {"name": "Sam's Club Pharmacy", "website": "https://www.samsclub.com/locator"},
+        "publix": {"name": "Publix Pharmacy", "website": "https://www.publix.com/locations"},
+        "heb": {"name": "H-E-B Pharmacy", "website": "https://www.heb.com/store-locations"},
+        "target": {"name": "Target (CVS)", "website": "https://www.target.com/store-locator/find-stores"},
+    }
+
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "MedAI-ClinicalSupport/1.0 (contact@medai.health)",
+            "Accept": "application/json",
+        })
+
+    @timed(name="pharmacy.find_nearby")
+    def find_nearby_pharmacies(self, lat: float, lon: float, drug_name: str = None, radius: int = 16000) -> Dict:
+        """Find pharmacies within radius (meters) using Overpass API."""
+        try:
+            radius_km = radius / 1000
+            overpass_url = "https://overpass-api.de/api/interpreter"
+            overpass_query = f"""
+[out:json][timeout:60];
+(
+  node["amenity"="pharmacy"](around:{radius},{lat},{lon});
+  way["amenity"="pharmacy"](around:{radius},{lat},{lon});
+  node["shop"="pharmacy"](around:{radius},{lat},{lon});
+  node["shop"="chemist"](around:{radius},{lat},{lon});
+  node["healthcare"="pharmacy"](around:{radius},{lat},{lon});
+);
+out body center;
+"""
+            response = self.session.post(overpass_url, data={"data": overpass_query}, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+
+            pharmacies = []
+            seen_locations = set()
+
+            for element in data.get("elements", []):
+                if element.get("type") == "way":
+                    elem_lat = element.get("center", {}).get("lat")
+                    elem_lon = element.get("center", {}).get("lon")
+                else:
+                    elem_lat = element.get("lat")
+                    elem_lon = element.get("lon")
+
+                if elem_lat is None or elem_lon is None:
+                    continue
+
+                loc_key = f"{round(elem_lat, 4)},{round(elem_lon, 4)}"
+                if loc_key in seen_locations:
+                    continue
+                seen_locations.add(loc_key)
+
+                distance = self._calculate_distance(lat, lon, elem_lat, elem_lon)
+                if distance > radius_km * 1.1:
+                    continue
+
+                tags = element.get("tags", {})
+                name = tags.get("name") or tags.get("brand") or tags.get("operator") or "Pharmacy"
+
+                addr_parts = []
+                if tags.get("addr:housenumber"):
+                    addr_parts.append(tags["addr:housenumber"])
+                if tags.get("addr:street"):
+                    addr_parts.append(tags["addr:street"])
+                if tags.get("addr:city"):
+                    addr_parts.append(tags["addr:city"])
+                if tags.get("addr:state"):
+                    addr_parts.append(tags["addr:state"])
+                if tags.get("addr:postcode"):
+                    addr_parts.append(tags["addr:postcode"])
+
+                address = ", ".join(addr_parts) if addr_parts else f"Location: {elem_lat:.4f}, {elem_lon:.4f}"
+                chain_type = self._identify_chain(name)
+
+                pharmacies.append({
+                    "name": name,
+                    "address": address,
+                    "latitude": elem_lat,
+                    "longitude": elem_lon,
+                    "distance_km": round(distance, 2),
+                    "distance_miles": round(distance * 0.621371, 2),
+                    "phone": tags.get("phone") or tags.get("contact:phone") or "",
+                    "website": tags.get("website") or "",
+                    "hours": tags.get("opening_hours") or "",
+                    "chain": chain_type,
+                })
+
+            pharmacies.sort(key=lambda x: x["distance_km"])
+            return {
+                "pharmacies": pharmacies[:25],
+                "count": len(pharmacies),
+                "search_location": {"lat": lat, "lon": lon},
+                "radius_miles": round(radius_km * 0.621371, 1),
+            }
+        except requests.exceptions.RequestException as e:
+            log.error(f"Pharmacy search failed: {e}")
+            return {"error": str(e), "pharmacies": []}
+
+    def _identify_chain(self, name: str) -> str:
+        """Identify pharmacy chain from name."""
+        name_lower = name.lower()
+        chains = [
+            ("walgreen", "Walgreens"), ("cvs", "CVS"), ("walmart", "Walmart"),
+            ("kroger", "Kroger"), ("rite aid", "Rite Aid"), ("riteaid", "Rite Aid"),
+            ("costco", "Costco"), ("sam's", "Sam's Club"), ("sams", "Sam's Club"),
+            ("publix", "Publix"), ("target", "Target"), ("heb", "H-E-B"), ("h-e-b", "H-E-B"),
+        ]
+        for keyword, chain_name in chains:
+            if keyword in name_lower:
+                return chain_name
+        return "Independent"
+
+    def geocode_address(self, address: str) -> Dict:
+        """Convert US ZIP code to coordinates using Zippopotam.us API."""
+        try:
+            zip_code = address.strip()
+            if not (zip_code.isdigit() and len(zip_code) == 5):
+                return {"success": False, "error": "Please enter a valid 5-digit US ZIP code (e.g., 38119)"}
+
+            endpoint = f"https://api.zippopotam.us/us/{zip_code}"
+            response = self.session.get(endpoint, timeout=10)
+
+            if response.status_code == 404:
+                return {"success": False, "error": f"ZIP code {zip_code} not found. Please check and try again."}
+
+            response.raise_for_status()
+            data = response.json()
+
+            if data and "places" in data and len(data["places"]) > 0:
+                place = data["places"][0]
+                city = place.get("place name", "")
+                state = place.get("state", "")
+                state_abbr = place.get("state abbreviation", "")
+                lat = float(place.get("latitude", 0))
+                lon = float(place.get("longitude", 0))
+                display = f"{city}, {state_abbr} {zip_code}"
+                return {
+                    "success": True, "latitude": lat, "longitude": lon,
+                    "display_name": display, "city": city, "state": state,
+                    "state_abbr": state_abbr, "zip": zip_code,
+                }
+            return {"success": False, "error": f"Could not find location for ZIP code {zip_code}"}
+        except requests.exceptions.RequestException:
+            return {"success": False, "error": "Network error. Please try again."}
+
+    def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Calculate distance in kilometers using Haversine formula."""
+        R = 6371
+        lat1_rad, lat2_rad = math.radians(lat1), math.radians(lat2)
+        delta_lat = math.radians(lat2 - lat1)
+        delta_lon = math.radians(lon2 - lon1)
+        a = math.sin(delta_lat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    def get_chain_websites(self) -> Dict:
+        """Return pharmacy chain websites for drug lookup."""
+        return self.PHARMACY_CHAINS
+
+
+# Additional singleton instances
+_clinical_trials_client = None
+_disease_client = None
+_pharmacy_finder = None
+
+
+def get_clinical_trials_client() -> ClinicalTrialsClient:
+    """Get ClinicalTrials client singleton."""
+    global _clinical_trials_client
+    if _clinical_trials_client is None:
+        _clinical_trials_client = ClinicalTrialsClient()
+    return _clinical_trials_client
+
+
+def get_disease_client() -> DiseaseInfoClient:
+    """Get DiseaseInfo client singleton."""
+    global _disease_client
+    if _disease_client is None:
+        _disease_client = DiseaseInfoClient()
+    return _disease_client
+
+
+def get_pharmacy_finder() -> PharmacyFinderClient:
+    """Get PharmacyFinder client singleton."""
+    global _pharmacy_finder
+    if _pharmacy_finder is None:
+        _pharmacy_finder = PharmacyFinderClient()
+    return _pharmacy_finder
