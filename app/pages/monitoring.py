@@ -226,7 +226,7 @@ def main():
             try:
                 resp = requests.get(
                     "https://api.fda.gov/drug/label.json",
-                    params={"search": f'openfda.generic_name:"{test_drug}"', "limit": 1},
+                    params={"search": f'openfda.brand_name:"{test_drug}" OR openfda.generic_name:"{test_drug}"', "limit": 1},
                     timeout=10,
                 )
                 if resp.status_code == 200:
