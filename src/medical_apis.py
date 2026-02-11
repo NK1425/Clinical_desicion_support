@@ -155,13 +155,18 @@ class PubMedClient:
     def __init__(self):
         self.session = requests.Session()
 
-    def search_articles(self, query: str, max_results: int = 5) -> Dict:
+    def search_articles(self, query: str, max_results: int = 5, recent_only: bool = False) -> Dict:
         """Search PubMed for medical articles."""
         search_url = f"{self.BASE_URL}/esearch.fcgi"
+        enhanced_query = query
+        if recent_only:
+            from datetime import datetime
+            year = datetime.now().year
+            enhanced_query = f"({query}) AND ({year - 5}[PDAT] : {year}[PDAT])"
         search_params = {
             "db": "pubmed",
-            "term": query,
-            "retmax": max_results,
+            "term": enhanced_query,
+            "retmax": min(max_results, 50),
             "retmode": "json",
             "sort": "relevance",
         }
