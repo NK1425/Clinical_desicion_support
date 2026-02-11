@@ -1,229 +1,198 @@
-# 🏥 Clinical Decision Support Assistant
+# Clinical Decision Support Assistant
 
-An AI-powered clinical decision support system leveraging Large Language Models, RAG pipelines, and real-time medical APIs to assist healthcare professionals with diagnostic insights.
+An AI-powered clinical decision support system using RAG (Retrieval-Augmented Generation), LangChain, and real-time medical APIs to assist healthcare professionals with evidence-based clinical insights.
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![LangChain](https://img.shields.io/badge/LangChain-0.1.0-green.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109-teal.svg)
+![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)
+![LangChain](https://img.shields.io/badge/LangChain-0.2+-orange.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-## 🌟 Features
-
-- **Multimodal Processing**: Handles patient records, clinical notes, and medical images
-- **RAG Pipeline**: Retrieval-Augmented Generation using FAISS for accurate medical information retrieval
-- **Real-time Data**: Integrates with openFDA API for drug information and adverse events
-- **Interactive Dashboard**: Streamlit-based UI for easy interaction
-- **RESTful API**: FastAPI backend for integration with existing systems
-- **Containerized**: Docker support for easy deployment
-
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│              Clinical Decision Support System                │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  📄 Patient Data      🖼️ Medical Images     📝 Clinical Notes │
-│         │                    │                    │          │
-│         └────────────────────┼────────────────────┘          │
-│                              ▼                               │
-│              ┌───────────────────────────┐                   │
-│              │   Multimodal Processor    │                   │
-│              │   (BLIP-2 + Text Parser)  │                   │
-│              └─────────────┬─────────────┘                   │
-│                            ▼                                 │
-│              ┌───────────────────────────┐                   │
-│              │      RAG Pipeline         │                   │
-│              │  ┌───────┐  ┌──────────┐  │                   │
-│              │  │ FAISS │  │ Medical  │  │                   │
-│              │  │ Index │  │ Knowledge│  │                   │
-│              │  └───────┘  └──────────┘  │                   │
-│              └─────────────┬─────────────┘                   │
-│                            ▼                                 │
-│              ┌───────────────────────────┐                   │
-│              │   Real-time APIs          │                   │
-│              │  (openFDA, PubMed)        │                   │
-│              └─────────────┬─────────────┘                   │
-│                            ▼                                 │
-│              ┌───────────────────────────┐                   │
-│              │      LLM Engine           │                   │
-│              │    (GPT-4 / LLaMA)        │                   │
-│              └─────────────┬─────────────┘                   │
-│                            ▼                                 │
-│              ┌───────────────────────────┐                   │
-│              │    FastAPI Backend        │                   │
-│              └─────────────┬─────────────┘                   │
-│                            ▼                                 │
-│              ┌───────────────────────────┐                   │
-│              │   Streamlit Dashboard     │                   │
-│              └───────────────────────────┘                   │
-└─────────────────────────────────────────────────────────────┘
+                    +------------------+
+                    |   Streamlit UI   |
+                    |  (Dashboard +    |
+                    |   Monitoring)    |
+                    +--------+---------+
+                             |
+                    +--------+---------+
+                    |   FastAPI API    |
+                    |  Auth | Metrics  |
+                    |  Rate Limiting   |
+                    +--------+---------+
+                             |
+              +--------------+--------------+
+              |              |              |
+     +--------+------+ +----+----+ +-------+--------+
+     | RAG Pipeline   | | LangChain| | Medical APIs  |
+     | (FAISS +       | | RAG Chain| | (openFDA,     |
+     |  Embeddings)   | | (Groq/  | |  PubMed)      |
+     +--------+------+ | OpenAI) | +----------------+
+              |         +----+----+
+     +--------+------+       |
+     | Knowledge Base |  +---+---+
+     | 120+ Medical   |  |  LLM  |
+     | Guidelines     |  | Groq  |
+     | + PubMed       |  |Llama  |
+     +-----------------+ +-------+
 ```
 
-## 🚀 Quick Start
+## Tech Stack
 
-### Prerequisites
+| Component | Technology |
+|-----------|-----------|
+| RAG Framework | **LangChain** (`langchain`, `langchain-community`, `langchain-groq`) |
+| LLM | **Llama 3.3 70B** via Groq (free) / GPT-4 via OpenAI (optional) |
+| Vector Database | **FAISS** with sentence-transformers (`all-MiniLM-L6-v2`) |
+| API Backend | **FastAPI** with API key auth, rate limiting, Prometheus metrics |
+| Dashboard | **Streamlit** with monitoring page |
+| Medical APIs | **openFDA** (drug info), **PubMed** (abstract ingestion) |
+| Logging | **Loguru** (structured JSON logging with correlation IDs) |
+| Testing | **pytest** with coverage, mocked dependencies |
+| CI/CD | **GitHub Actions** (lint, test, Docker build) |
+| Containerization | **Docker** (multi-stage) + Docker Compose |
 
-- Python 3.9+
-- OpenAI API Key
-- 8GB+ RAM recommended
+## Features
 
-### Installation
+- **RAG Pipeline**: Retrieves relevant medical guidelines from a 120+ document knowledge base using FAISS semantic search, then generates contextualized clinical responses via LLM
+- **LangChain Integration**: Full LangChain RAG chain with `ChatGroq`, `FAISS` vectorstore wrapper, `RecursiveCharacterTextSplitter`, and custom clinical prompts
+- **Real-time Drug Data**: Queries openFDA for drug interactions, adverse events, warnings, and contraindications
+- **PubMed Ingestion**: Automated pipeline to download and index PubMed abstracts for any medical condition
+- **API Security**: Header-based API key authentication and in-memory sliding window rate limiting
+- **Prometheus Metrics**: Request count, latency histograms, RAG/LLM timing, knowledge base size at `/metrics`
+- **Monitoring Dashboard**: Streamlit page showing real-time system health, performance metrics, and knowledge base statistics
+- **RAG Evaluation**: Precision@K, MRR, and latency benchmarks against 32 curated Q&A pairs
+- **Medical Image Analysis**: Optional BLIP-2 integration for medical image interpretation
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/NK1425/clinical-decision-support.git
-   cd clinical-decision-support
-   ```
+## Quick Start
 
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+### 1. Clone and install
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your OpenAI API key
-   ```
-
-5. **Initialize the vector store**
-   ```bash
-   python src/init_vectorstore.py
-   ```
-
-### Running the Application
-
-#### Option 1: Streamlit Dashboard (Recommended)
 ```bash
+git clone https://github.com/yourusername/clinical-decision-support.git
+cd clinical-decision-support
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+# Edit .env — add your GROQ_API_KEY (free at https://console.groq.com)
+```
+
+### 3. Initialize knowledge base
+
+```bash
+python src/init_vectorstore.py
+# Optional: also ingest PubMed abstracts
+python src/init_vectorstore.py --include-pubmed
+```
+
+### 4. Run
+
+```bash
+# API server
+uvicorn api.main:app --reload
+
+# Streamlit dashboard (separate terminal)
 streamlit run app/streamlit_app.py
 ```
-Access at: `http://localhost:8501`
 
-#### Option 2: FastAPI Backend
-```bash
-uvicorn api.main:app --reload
-```
-Access API docs at: `http://localhost:8000/docs`
+### Docker
 
-#### Option 3: Docker
 ```bash
 docker-compose up --build
+# API: http://localhost:8000  |  Dashboard: http://localhost:8501
 ```
 
-## 📁 Project Structure
-
-```
-clinical-decision-support/
-├── README.md                 # Documentation
-├── requirements.txt          # Dependencies
-├── .env.example              # Environment template
-├── .gitignore                # Git ignore rules
-├── Dockerfile                # Docker configuration
-├── docker-compose.yml        # Docker compose
-│
-├── data/
-│   ├── medical_guidelines.txt    # CDC/WHO guidelines
-│   ├── drug_interactions.json    # Drug interaction data
-│   └── sample_patients.json      # Synthetic patient data
-│
-├── src/
-│   ├── __init__.py
-│   ├── config.py                 # Configuration settings
-│   ├── embeddings.py             # Text embeddings
-│   ├── vector_store.py           # FAISS operations
-│   ├── rag_pipeline.py           # RAG implementation
-│   ├── llm_handler.py            # LLM interactions
-│   ├── image_processor.py        # BLIP-2 image analysis
-│   ├── medical_apis.py           # openFDA integration
-│   └── init_vectorstore.py       # Initialize vector DB
-│
-├── api/
-│   ├── __init__.py
-│   ├── main.py                   # FastAPI app
-│   └── routes/
-│       ├── query.py              # Query endpoints
-│       └── health.py             # Health check
-│
-├── app/
-│   └── streamlit_app.py          # Streamlit dashboard
-│
-└── tests/
-    └── test_rag.py               # Unit tests
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `OPENAI_API_KEY` | OpenAI API key for GPT-4 | Yes |
-| `MODEL_NAME` | LLM model to use | No (default: gpt-3.5-turbo) |
-| `EMBEDDING_MODEL` | Embedding model | No (default: all-MiniLM-L6-v2) |
-
-## 📊 API Endpoints
+## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/query` | Submit clinical query |
-| POST | `/api/analyze-image` | Analyze medical image |
-| GET | `/api/drug/{drug_name}` | Get drug information |
-| GET | `/api/health` | Health check |
+| GET | `/api/health` | System health check |
+| POST | `/api/query` | Clinical query (RAG pipeline) |
+| POST | `/api/drug-check` | Multi-drug interaction check |
+| GET | `/api/drug/{name}` | Drug information lookup |
+| GET | `/api/adverse-events/{name}` | Adverse event reports |
+| GET | `/api/stats` | Knowledge base statistics |
+| GET | `/metrics` | Prometheus metrics |
 
-## 🧪 Example Usage
+## Data Pipeline
 
-### Python Client
-```python
-import requests
+The knowledge base combines three sources:
 
-response = requests.post(
-    "http://localhost:8000/api/query",
-    json={
-        "patient_info": "65-year-old male with Type 2 diabetes",
-        "symptoms": "fatigue, increased thirst, blurred vision",
-        "current_medications": ["Metformin 500mg", "Lisinopril 10mg"]
-    }
-)
-print(response.json())
-```
+1. **Curated Guidelines** (`data/medical_guidelines/`): 37 markdown files covering cardiology, endocrinology, neurology, pulmonology, nephrology, pharmacology, emergency medicine, psychiatry, oncology, pediatrics, and geriatrics
+2. **Core Knowledge** (`src/init_vectorstore.py`): 13 inline clinical guidelines for baseline coverage
+3. **PubMed Abstracts** (`src/pubmed_ingestion.py`): Automated ingestion from PubMed API with source attribution
 
-### cURL
 ```bash
-curl -X POST "http://localhost:8000/api/query" \
-  -H "Content-Type: application/json" \
-  -d '{"patient_info": "65-year-old male", "symptoms": "chest pain"}'
+# Ingest PubMed abstracts for specific conditions
+python -m src.pubmed_ingestion --conditions "diabetes,hypertension,COPD" --max-per-condition 30
 ```
 
-## 🛠️ Tech Stack
+## Evaluation
 
-| Component | Technology |
-|-----------|------------|
-| **LLM** | OpenAI GPT-4 / GPT-3.5 |
-| **Vision** | BLIP-2 (Salesforce) |
-| **RAG Framework** | LangChain |
-| **Vector Database** | FAISS |
-| **Real-time Data** | openFDA API |
-| **Backend** | FastAPI |
-| **Frontend** | Streamlit |
-| **Containerization** | Docker |
+```bash
+# Run RAG evaluation
+python -m src.evaluation
+```
 
-## ⚠️ Disclaimer
+Evaluates retrieval quality against 32 Q&A pairs. Metrics:
+- Precision@1, @3, @5
+- Mean Reciprocal Rank (MRR)
+- Retrieval latency (P50, P95, P99)
 
-This is an **academic/portfolio project** for demonstration purposes only. It should **NOT** be used for actual medical diagnosis or treatment decisions. Always consult qualified healthcare professionals for medical advice.
+Results saved to `results/eval_latest.json`.
 
-## 📄 License
+## Testing
 
-MIT License - see [LICENSE](LICENSE) for details.
+```bash
+pytest tests/ -v --cov=src --cov=api --cov-report=term-missing
+```
 
-## 👨‍💻 Author
+## Project Structure
 
-**Nitish Kumar Manthri**
-- LinkedIn: [nitish-kumar-6b6925303](https://www.linkedin.com/in/nitish-kumar-6b6925303)
-- GitHub: [NK1425](https://github.com/NK1425)
+```
+├── src/
+│   ├── config.py              # Settings (Groq, OpenAI, FAISS config)
+│   ├── logging_config.py      # Loguru structured logging
+│   ├── embeddings.py          # Sentence-transformers embedding engine
+│   ├── vector_store.py        # FAISS vector database
+│   ├── llm_handler.py         # LLM handler (Groq → OpenAI → fallback)
+│   ├── rag_pipeline.py        # Core RAG pipeline with timing
+│   ├── langchain_rag.py       # LangChain RAG chain (ChatGroq + FAISS)
+│   ├── medical_apis.py        # openFDA API client
+│   ├── data_ingestion.py      # Document chunking and indexing
+│   ├── pubmed_ingestion.py    # PubMed abstract ingestion
+│   ├── evaluation.py          # RAG evaluation framework
+│   ├── init_vectorstore.py    # Knowledge base initialization
+│   └── image_processor.py     # BLIP-2 image analysis (optional)
+├── api/
+│   ├── main.py                # FastAPI app (auth, rate limiting, metrics)
+│   └── monitoring.py          # Prometheus metrics definitions
+├── app/
+│   ├── streamlit_app.py       # Main Streamlit dashboard
+│   └── pages/
+│       └── monitoring.py      # Monitoring dashboard page
+├── data/
+│   ├── medical_guidelines/    # 37 curated clinical guideline files
+│   └── faiss_index/           # FAISS index + document metadata
+├── tests/
+│   ├── conftest.py            # Shared test fixtures
+│   ├── test_rag.py            # RAG pipeline tests
+│   ├── test_vector_store.py   # Vector store tests
+│   ├── test_medical_apis.py   # Medical API tests (mocked)
+│   ├── test_api.py            # FastAPI endpoint tests
+│   └── evaluation_data.json   # 32 evaluation Q&A pairs
+├── .github/workflows/ci.yml   # CI pipeline
+├── Dockerfile                 # Multi-stage Docker build
+├── docker-compose.yml         # API + Streamlit services
+└── requirements.txt           # Python dependencies
+```
+
+## License
+
+MIT

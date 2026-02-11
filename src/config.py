@@ -8,28 +8,37 @@ from typing import Optional
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
-    
-    # OpenAI Configuration
+
+    # Groq Configuration (primary LLM - free)
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+
+    # OpenAI Configuration (optional fallback)
     openai_api_key: str = ""
     model_name: str = "gpt-3.5-turbo"
-    
+
     # Embedding Configuration
     embedding_model: str = "all-MiniLM-L6-v2"
-    
+
     # Vector Store Configuration
     vector_store_path: str = "./data/faiss_index"
-    
+
     # API Configuration
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    
+    api_key: str = ""
+
     # openFDA API (no key required)
     openfda_base_url: str = "https://api.fda.gov"
-    
+
     # Chunk Configuration for RAG
     chunk_size: int = 1000
     chunk_overlap: int = 200
-    
+
+    # Logging Configuration
+    log_level: str = "INFO"
+    log_file: str = "logs/cdss.log"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -50,11 +59,16 @@ MEDICAL_SPECIALTIES = [
     "nephrology",
     "rheumatology",
     "infectious_disease",
-    "general_medicine"
+    "general_medicine",
+    "emergency_medicine",
+    "psychiatry",
+    "pediatrics",
+    "geriatrics",
+    "pharmacology",
 ]
 
 # System prompt for clinical assistant
-CLINICAL_SYSTEM_PROMPT = """You are an AI-powered Clinical Decision Support Assistant designed to help healthcare professionals. 
+CLINICAL_SYSTEM_PROMPT = """You are an AI-powered Clinical Decision Support Assistant designed to help healthcare professionals.
 
 Your role is to:
 1. Analyze patient information, symptoms, and medical history

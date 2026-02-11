@@ -1,0 +1,194 @@
+[
+  {
+    "query": "What is the first-line treatment for type 2 diabetes?",
+    "expected_answer": "Metformin",
+    "expected_sources": ["ADA Standards of Care", "diabetes"],
+    "category": "endocrinology"
+  },
+  {
+    "query": "What is the target HbA1c for most adults with type 2 diabetes?",
+    "expected_answer": "less than 7%",
+    "expected_sources": ["ADA Standards of Care", "diabetes"],
+    "category": "endocrinology"
+  },
+  {
+    "query": "What are the contraindications for metformin?",
+    "expected_answer": "eGFR less than 30",
+    "expected_sources": ["metformin", "FDA Drug Label"],
+    "category": "pharmacology"
+  },
+  {
+    "query": "What is the blood pressure target for hypertension?",
+    "expected_answer": "less than 130/80",
+    "expected_sources": ["hypertension", "ACC/AHA"],
+    "category": "cardiology"
+  },
+  {
+    "query": "What are the first-line agents for hypertension treatment?",
+    "expected_answer": "ACE inhibitors, ARBs, calcium channel blockers, thiazide diuretics",
+    "expected_sources": ["hypertension"],
+    "category": "cardiology"
+  },
+  {
+    "query": "What is the door-to-balloon time target for STEMI?",
+    "expected_answer": "less than 90 minutes",
+    "expected_sources": ["STEMI", "ACS"],
+    "category": "cardiology"
+  },
+  {
+    "query": "What are the four pillars of HFrEF treatment?",
+    "expected_answer": "ACEi/ARB/ARNI, beta-blocker, MRA, SGLT2i",
+    "expected_sources": ["heart failure", "HFrEF"],
+    "category": "cardiology"
+  },
+  {
+    "query": "What is the qSOFA criteria for sepsis screening?",
+    "expected_answer": "RR >= 22, altered mentation, SBP <= 100",
+    "expected_sources": ["sepsis", "Surviving Sepsis"],
+    "category": "critical_care"
+  },
+  {
+    "query": "What is the tPA window for ischemic stroke?",
+    "expected_answer": "4.5 hours",
+    "expected_sources": ["stroke"],
+    "category": "neurology"
+  },
+  {
+    "query": "What medications should be avoided in HFrEF?",
+    "expected_answer": "NSAIDs, non-dihydropyridine CCBs",
+    "expected_sources": ["heart failure"],
+    "category": "cardiology"
+  },
+  {
+    "query": "What is the CHA2DS2-VASc score used for?",
+    "expected_answer": "stroke risk assessment in atrial fibrillation",
+    "expected_sources": ["atrial fibrillation"],
+    "category": "cardiology"
+  },
+  {
+    "query": "What is the first-line treatment for anaphylaxis?",
+    "expected_answer": "epinephrine IM",
+    "expected_sources": ["anaphylaxis"],
+    "category": "emergency_medicine"
+  },
+  {
+    "query": "What GOLD classification is used for COPD severity?",
+    "expected_answer": "Based on FEV1 percent predicted",
+    "expected_sources": ["COPD", "GOLD"],
+    "category": "pulmonology"
+  },
+  {
+    "query": "What is the KDIGO staging for acute kidney injury?",
+    "expected_answer": "Stage 1: creatinine 1.5-1.9x baseline",
+    "expected_sources": ["AKI", "KDIGO"],
+    "category": "nephrology"
+  },
+  {
+    "query": "What is the reversal agent for dabigatran?",
+    "expected_answer": "idarucizumab",
+    "expected_sources": ["anticoagulation", "dabigatran"],
+    "category": "pharmacology"
+  },
+  {
+    "query": "What is the PHQ-9 used for?",
+    "expected_answer": "depression screening and severity assessment",
+    "expected_sources": ["depression"],
+    "category": "psychiatry"
+  },
+  {
+    "query": "What is the Wells score used for?",
+    "expected_answer": "DVT and PE probability assessment",
+    "expected_sources": ["DVT", "PE"],
+    "category": "cardiology"
+  },
+  {
+    "query": "What is serotonin syndrome and what causes it?",
+    "expected_answer": "excess serotonergic activity, MAOI plus SSRI",
+    "expected_sources": ["drug interactions", "serotonin"],
+    "category": "pharmacology"
+  },
+  {
+    "query": "What are the indications for dialysis in AKI?",
+    "expected_answer": "AEIOU: acidosis, electrolytes, intoxication, overload, uremia",
+    "expected_sources": ["AKI"],
+    "category": "nephrology"
+  },
+  {
+    "query": "What is the recommended asthma step 3 therapy?",
+    "expected_answer": "low-dose ICS plus LABA",
+    "expected_sources": ["asthma", "GINA"],
+    "category": "pulmonology"
+  },
+  {
+    "query": "What is the treatment for diabetic ketoacidosis?",
+    "expected_answer": "fluid resuscitation, insulin, potassium management",
+    "expected_sources": ["DKA", "diabetes"],
+    "category": "endocrinology"
+  },
+  {
+    "query": "What is the GCS scoring for traumatic brain injury?",
+    "expected_answer": "Glasgow Coma Scale",
+    "expected_sources": ["TBI"],
+    "category": "neurology"
+  },
+  {
+    "query": "What is the first-line benzodiazepine for status epilepticus?",
+    "expected_answer": "lorazepam or midazolam",
+    "expected_sources": ["status epilepticus", "seizure"],
+    "category": "neurology"
+  },
+  {
+    "query": "When should nephrology be consulted for CKD?",
+    "expected_answer": "eGFR less than 30",
+    "expected_sources": ["CKD", "KDIGO"],
+    "category": "nephrology"
+  },
+  {
+    "query": "What is the recommended cancer screening for colon cancer?",
+    "expected_answer": "colonoscopy",
+    "expected_sources": ["cancer screening"],
+    "category": "oncology"
+  },
+  {
+    "query": "What is tumor lysis syndrome treatment?",
+    "expected_answer": "rasburicase, allopurinol",
+    "expected_sources": ["oncologic emergencies"],
+    "category": "oncology"
+  },
+  {
+    "query": "What is the Beers criteria used for?",
+    "expected_answer": "potentially inappropriate medications in elderly",
+    "expected_sources": ["geriatric", "polypharmacy"],
+    "category": "geriatrics"
+  },
+  {
+    "query": "What is the management of upper GI bleeding?",
+    "expected_answer": "Glasgow-Blatchford score, PPI, endoscopy",
+    "expected_sources": ["GI bleeding"],
+    "category": "gastroenterology"
+  },
+  {
+    "query": "What defines preeclampsia?",
+    "expected_answer": "hypertension with proteinuria or end-organ damage after 20 weeks",
+    "expected_sources": ["pregnancy", "preeclampsia"],
+    "category": "obstetrics"
+  },
+  {
+    "query": "What is the WHO analgesic ladder?",
+    "expected_answer": "step 1 non-opioid, step 2 weak opioid, step 3 strong opioid",
+    "expected_sources": ["pain management"],
+    "category": "pharmacology"
+  },
+  {
+    "query": "What is the first-line SSRI for depression?",
+    "expected_answer": "sertraline or escitalopram",
+    "expected_sources": ["depression"],
+    "category": "psychiatry"
+  },
+  {
+    "query": "What are the risk factors for falls in elderly?",
+    "expected_answer": "medications, gait impairment, vision, home hazards",
+    "expected_sources": ["falls", "geriatric"],
+    "category": "geriatrics"
+  }
+]
