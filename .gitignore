@@ -14,9 +14,9 @@ __pycache__/
 dist/
 build/
 
-# Vector Store (large files)
-data/faiss_index/
-*.faiss
+# Vector Store (track the pre-built index for Streamlit Cloud)
+# data/faiss_index/
+# *.faiss
 
 # IDE
 .vscode/
